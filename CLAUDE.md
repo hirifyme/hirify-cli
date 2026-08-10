@@ -26,6 +26,8 @@ first-party, обе живут над одними сервисами: беру�
 | Как это устроено внутри | [`bin/hirify.js`](bin/hirify.js) |
 | Что публикуется наружу и под каким именем | [`package.json`](package.json) |
 | Кто отдаёт данные на том конце | [`/home/igora/hirify/api/CLAUDE.md`](/home/igora/hirify/api/CLAUDE.md) |
+| Дом всей темы «агент ходит в Hirify по ключу» | [`api/docs/product/agent-api/README.md`](/home/igora/hirify/api/docs/product/agent-api/README.md) |
+| Что осталось до запуска и в каком порядке | [`api/docs/product/agent-api/launch-plan.md`](/home/igora/hirify/api/docs/product/agent-api/launch-plan.md) |
 
 <!-- Колонка «Вопрос» — о чём док, а НЕ что в нём сейчас написано: статусы и цифры протухают
      и врут каждой заходящей сессии. Правила раздела — закон продуктового индекса:
