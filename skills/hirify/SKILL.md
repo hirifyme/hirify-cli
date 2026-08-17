@@ -1,48 +1,57 @@
 ---
 name: hirify
-description: Поиск работы через Hirify - вакансии из фидов пользователя и «куда откликнуться» по конкретной вакансии. Используй, когда пользователь просит найти вакансии, посмотреть его фиды, подобрать роли под его профиль или узнать, куда отправлять отклик. Триггеры - «найди вакансии», «что там по моему фиду», «куда откликнуться», «hirify».
+description: Job search through Hirify - vacancies from the user's saved feeds, search across the board, and the contact to apply to. Use when the user asks to find jobs, look at their feeds, pick roles that fit their profile, or find out where to send an application. Triggers - "find jobs", "what is in my feed", "where do I apply", "hirify".
 ---
 
-# Hirify - поиск работы
+# Hirify job search
 
-Ты работаешь с job-бордом Hirify через CLI `hirify`.
+You work with the Hirify job board through the `hirify` CLI.
 
-## Главное правило: лимит
+## The rule that matters: the limit
 
-- **Чтение бесплатно и без ограничений** - `me`, `feeds`, `feed`, `search`. Читай сколько нужно.
-- **`reveal` тратит 1 из дневного лимита.** Это единственная платная операция.
-- Повторный `reveal` той же вакансии - **бесплатный** (дедуп на сервере).
-- **Не жги лимит.** Сначала отбери вакансии чтением, и только потом раскрывай те, что реально подходят пользователю. Раскрыть весь лимит наугад = сжечь день.
-- Лимит обнуляется в 00:00. Остаток всегда видно: `hirify me`.
+- **Reading is free and unlimited**: `me`, `feeds`, `feed`, `search`. Read as much as you need.
+- **`reveal` spends 1 of the daily limit.** It is the only metered call.
+- Revealing the same vacancy again is **free** (the server deduplicates).
+- **Do not burn the limit.** Shortlist by reading first, then reveal only what genuinely fits the
+  user. Revealing at random spends the whole day.
+- The limit resets at midnight. `hirify me` always shows what is left.
 
-## Порядок работы
+## How to work
 
 ```bash
-hirify me                       # план и остаток лимита - начни отсюда
-hirify feeds                    # сохранённые фиды пользователя (его же фильтры)
-hirify feed <id>                # вакансии из фида - основной источник
-hirify search "senior go"       # если подходящего фида нет
-hirify reveal <slug>            # КУДА ОТКЛИКНУТЬСЯ - тратит лимит
+hirify me                       # plan and remaining limit: start here
+hirify feeds                    # the user's saved feeds, which are their own filters
+hirify feed <id>                # vacancies from a feed: the best source
+hirify search "senior go"       # when no feed fits
+hirify reveal <slug>            # WHERE TO APPLY: spends the limit
 ```
 
-Все команды принимают `--json` - бери его, когда нужно парсить, а не показывать.
+Every command takes `--json`. Use it when you need to parse rather than show.
 
-1. `hirify me` - проверь остаток, прежде чем что-то раскрывать.
-2. `hirify feeds` → `hirify feed <id>` - фиды это сохранённые фильтры пользователя, они уже отражают, чего он хочет. Это лучший источник, чем слепой поиск.
-3. Нет подходящего фида - `hirify search "<запрос>" --limit 20`.
-4. Отбери подходящие **по карточке** (в ней нет контактов - это нормально).
-5. `hirify reveal <slug>` только для отобранных. Вернёт компанию, LinkedIn и то, куда отправлять отклик.
+1. `hirify me` to check what is left before revealing anything.
+2. `hirify feeds`, then `hirify feed <id>`. Feeds are filters the user saved themselves, so they
+   already describe what the user wants. That beats a blind search.
+3. No fitting feed: `hirify search "<query>" --limit 20`.
+4. Shortlist **from the cards**. Cards carry no contacts, and that is normal.
+5. `hirify reveal <slug>` only for the shortlist. It returns the company, its LinkedIn page and
+   where to send the application.
 
-## Чего делать НЕ надо
+## What not to do
 
-- **Не откликайся сам** - API для этого нет и не будет. Твоя работа заканчивается на том, что ты приносишь пользователю ссылку и контакт. Отклик отправляет он.
-- Не раскрывай вакансию «на всякий случай» или чтобы посмотреть, что внутри.
-- Не пытайся выкачать базу - лимит именно для этого и стоит, аккаунт улетит в бан.
-- **Не запускай `hirify login` сам.** Вход открывает браузер и требует живого человека у экрана: попроси пользователя выполнить команду и дождись его.
+- **Do not apply on the user's behalf.** There is no API for it and there will not be one. Your work
+  ends when you bring back the link and the contact. The person sends the application.
+- Do not reveal a vacancy to see what is inside, or just in case.
+- Do not try to pull the whole database. The limit exists for exactly that, and the account gets
+  banned.
+- **Do not run `hirify login` yourself.** It opens a browser and needs a person at the screen. Ask
+  the user to run it and wait for them.
 
-## Если что-то не так
+## When something goes wrong
 
-- **`вы ещё не вошли`** - попроси пользователя выполнить `hirify login`: откроется браузер, он подтвердит доступ, терминал продолжит сам. На сервере без браузера - `hirify auth <ключ>`, ключ на hirify.me/account/api-access.
-- **`401`, вход больше не действует** - то же самое: `hirify login` ещё раз.
-- **`403`** - у доступа нет нужного права (`agent:reveal`) либо нет активного тарифа. Пользователю: hirify.me/account/api-access.
-- **`429`** - дневной лимит исчерпан, обнулится в 00:00. Ждать до полуночи, читать по-прежнему можно.
+- **"you are not signed in yet"**: ask the user to run `hirify login`. Their browser opens, they
+  confirm, and the terminal continues on its own. On a server with no browser: `hirify auth <key>`,
+  key from hirify.me/account/api-access.
+- **401, sign-in no longer valid**: same answer, `hirify login` again.
+- **403**: the sign-in is missing a permission, or the plan does not include agent access. Point the
+  user at hirify.me/account/api-access.
+- **429**: the daily limit is used up until midnight. Reading still works.

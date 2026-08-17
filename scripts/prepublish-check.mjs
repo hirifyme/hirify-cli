@@ -1,53 +1,52 @@
-// Страж порядка публикации. Запускается сам, из `prepublishOnly`, перед `npm publish`.
+// Publish-order guard. Runs by itself from `prepublishOnly`, before `npm publish`.
 //
-// Зачем: README уезжает в npm-пакет (`files`), а он с первой же строки зовёт
-// `npx skills add hirifyme/hirify`. Если пакет опубликовать раньше, чем откроют
-// репозиторий, эта строка поедет живым людям и приведёт их в приватный репозиторий,
-// то есть в ошибку. Обратный порядок безопаснее, но тоже неполон, поэтому правило
-// простое: сначала публичный репозиторий, потом npm.
+// Why: README.md ships inside the npm tarball, and its first section tells the reader to
+// run `npx skills add hirifyme/hirify-cli`. Publishing the package before the repository
+// is public hands that line to real people and sends them to a repository they cannot
+// open. So the rule is: repository first, npm second.
 //
-// Раньше это правило жило договорённостью в CLAUDE.md. Договорённость наружу не едет
-// и к самой команде публикации не привязана, поэтому её нечем соблюсти сессии без
-// свежего контекста. Здесь она привязана.
+// This used to be an agreement written in an internal file. An agreement does not travel
+// with the package and is not attached to the publish command, so nothing enforced it.
+// This does.
 //
-// Аварийный выход, если GitHub недоступен, а публиковать надо:
+// Escape hatch, when GitHub is unreachable and the publish has to happen anyway:
 //   HIRIFY_SKIP_REPO_CHECK=1 npm publish
 
-const REPO = 'hirifyme/hirify'
-const fail = (msg) => { console.error(`\nhirify: публикация остановлена.\n${msg}\n`); process.exit(1) }
+const REPO = 'hirifyme/hirify-cli'
+const fail = (msg) => { console.error(`\nhirify: publish stopped.\n${msg}\n`); process.exit(1) }
 
 if (process.env.HIRIFY_SKIP_REPO_CHECK) {
-  console.error('hirify: проверка публичности репозитория пропущена по HIRIFY_SKIP_REPO_CHECK.')
+  console.error('hirify: repository visibility check skipped through HIRIFY_SKIP_REPO_CHECK.')
   process.exit(0)
 }
 
-// Без токена: нам важно ровно то, что видит посторонний. Приватный репозиторий
-// отвечает анониму 404, а не 403, поэтому проверяем именно анонимный запрос.
+// No token on purpose: what matters is exactly what an outsider sees. A private
+// repository answers an anonymous request with 404 rather than 403.
 let res
 try {
   res = await fetch(`https://api.github.com/repos/${REPO}`, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'hirify-prepublish-check' },
   })
 } catch (e) {
-  fail(`Не удалось спросить GitHub, открыт ли ${REPO}: ${e.message}\n` +
-    'Проверьте сеть или, если уверены в порядке, повторите с HIRIFY_SKIP_REPO_CHECK=1.')
+  fail(`Could not ask GitHub whether ${REPO} is public: ${e.message}\n` +
+    'Check the network, or repeat with HIRIFY_SKIP_REPO_CHECK=1 if you are sure of the order.')
 }
 
 if (res.status === 404) {
-  fail(`Репозиторий ${REPO} ещё не публичный.\n` +
-    'README внутри пакета зовёт `npx skills add ' + REPO + '`, и эта команда приведёт\n' +
-    'читателя в закрытый репозиторий. Сначала откройте репозиторий, потом публикуйте пакет.')
+  fail(`The repository ${REPO} is not public yet.\n` +
+    `The README inside this package tells people to run \`npx skills add ${REPO}\`, and that\n` +
+    'command would send them to a closed repository. Make the repository public first.')
 }
 
 if (!res.ok) {
-  fail(`GitHub ответил ${res.status} на вопрос о ${REPO}.\n` +
-    'Повторите позже или, если уверены в порядке, повторите с HIRIFY_SKIP_REPO_CHECK=1.')
+  fail(`GitHub answered ${res.status} when asked about ${REPO}.\n` +
+    'Try again later, or repeat with HIRIFY_SKIP_REPO_CHECK=1 if you are sure of the order.')
 }
 
 const repo = await res.json().catch(() => null)
 
 if (repo?.private !== false) {
-  fail(`GitHub не подтвердил, что ${REPO} открыт. Сначала откройте репозиторий, потом публикуйте.`)
+  fail(`GitHub did not confirm that ${REPO} is public. Make the repository public first.`)
 }
 
-console.error(`hirify: ${REPO} открыт, порядок публикации соблюдён.`)
+console.error(`hirify: ${REPO} is public, the publish order holds.`)

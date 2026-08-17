@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// Hirify CLI - доступ агента к вакансиям Hirify (вторая равноправная дверь - MCP).
+// Hirify CLI: job search for AI agents.
 //
-// Тонкий клиент над живым REST-слоем `api.hirify.me/api/agent/*` (тот же, что под MCP).
-// Нулевые зависимости: Node 18+ (встроенный fetch), запускается через `npx hirify`.
+// A thin client over `api.hirify.me/api/agent/*`, the same API the MCP server serves.
+// No dependencies: Node 18+ (built-in fetch), runs through `npx hirify`.
 //
-// Правило метрирования (то же, что на бэке): чтение вакансий бесплатно и без лимита,
-// раскрытие контакта тратит 1 из дневного лимита, повтор по той же вакансии - бесплатно.
+// Metering, same as on the server: reading vacancies is free and unlimited, revealing a
+// contact spends 1 of the daily limit, and revealing the same vacancy again is free.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -16,37 +16,38 @@ import { randomBytes, createHash } from 'node:crypto'
 
 const API = process.env.HIRIFY_API || 'https://api.hirify.me'
 const CONFIG_DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'hirify')
-// Один файл на любой способ входа: браузерная сессия и ключ из кабинета лежат в нём же.
-// Разбирать «а откуда сейчас взялся токен» из двух файлов дороже, чем из одного поля `kind`.
+// One file for either way of signing in. Working out where the current token came from
+// is cheaper from a single `kind` field than from two files that may both exist.
 const AUTH_FILE = join(CONFIG_DIR, 'auth.json')
-// Файл ключа из версии 0.1: читаем ради тех, кто уже им пользуется, но больше не пишем.
+// The key file from 0.1: still read for anyone who has one, never written again.
 const LEGACY_KEY_FILE = join(CONFIG_DIR, 'key')
 
 const SCOPES = 'agent:read agent:reveal offline_access'
 const CALLBACK_PATH = '/callback'
-// Столько ждём подтверждения в браузере. Код авторизации на той стороне живёт те же 5 минут.
+// How long we wait for the browser. The authorization code lives the same five minutes.
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000
 
-const HELP = `hirify - доступ AI-агента к вакансиям Hirify
+const HELP = `hirify - job search for AI agents
 
-  hirify login                  войти через браузер
-  hirify me                     тариф и остаток дневного лимита
-  hirify feeds                  ваши сохранённые фиды
-  hirify feed <id>              вакансии из фида            [--limit N]
-  hirify search <запрос>        поиск вакансий по критериям [--limit N] [--grade G]
-  hirify reveal <slug>          КУДА ОТКЛИКНУТЬСЯ: тратит 1 из дневного лимита
-  hirify logout                 выйти на этом компьютере
+  hirify login                 sign in through your browser
+  hirify me                    your plan and today's remaining reveals
+  hirify feeds                 the feeds you saved on the site
+  hirify feed <id>             vacancies from one feed      [--limit N]
+  hirify search <query>        search vacancies             [--limit N] [--grade G]
+  hirify reveal <slug>         WHERE TO APPLY: uses 1 reveal
+  hirify logout                sign out on this computer
 
-  --json                        сырой JSON вместо текста (для парсинга)
+  --json                       raw JSON instead of text
 
-Лимиты: чтение (me, feeds, feed, search) бесплатно и без ограничений.
-        reveal тратит 1 из дневного лимита, остаток видно в hirify me.
-        Повторное раскрытие той же вакансии бесплатно.
-Правила для агента: npx skills add hirifyme/hirify
-Без браузера (CI, сервер): hirify auth <ключ> или переменная HIRIFY_KEY.
-        Ключ: hirify.me/account/api-access`
+Reading is free and unlimited: me, feeds, feed, search.
+Only reveal is metered, and revealing the same vacancy again is free.
+The limit resets at midnight; hirify me shows what is left.
 
-// ── утилиты ────────────────────────────────────────────────────────────────
+Rules for your agent: npx skills add hirifyme/hirify-cli
+No browser (CI, servers): hirify auth <key>, or the HIRIFY_KEY variable.
+Key: hirify.me/account/api-access`
+
+// ── helpers ────────────────────────────────────────────────────────────────
 const die = (msg, code = 1) => { console.error(`hirify: ${msg}`); process.exit(code) }
 
 const flag = (args, name) => {
@@ -61,14 +62,14 @@ const out = (data, text) => {
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const now = () => Math.floor(Date.now() / 1000)
 
-// ── хранилище доступа ──────────────────────────────────────────────────────
+// ── stored access ──────────────────────────────────────────────────────────
 function readSession() {
   if (existsSync(AUTH_FILE)) {
     try {
       const s = JSON.parse(readFileSync(AUTH_FILE, 'utf8'))
       if (s && typeof s.access_token === 'string' && s.access_token) return s
     } catch {
-      // Битый файл - не повод падать: ведём себя как «входа нет».
+      // A damaged file is not worth crashing over: behave as if nobody is signed in.
     }
   }
   if (existsSync(LEGACY_KEY_FILE)) {
@@ -91,22 +92,22 @@ function forgetSession() {
   return had
 }
 
-const NOT_LOGGED_IN =
-  'вы ещё не вошли. Выполните `hirify login` - откроется браузер.\n' +
-  '        Без браузера (CI, сервер): `hirify auth <ключ>` или переменная HIRIFY_KEY.\n' +
-  '        Ключ: hirify.me/account/api-access'
+const NOT_SIGNED_IN =
+  'you are not signed in yet. Run `hirify login` and your browser will open.\n' +
+  '        No browser (CI, servers): `hirify auth <key>`, or set HIRIFY_KEY.\n' +
+  '        Key: hirify.me/account/api-access'
 
 /**
- * Токен для запроса. Приоритет у переменной окружения: она есть только там, где её
- * поставили осознанно (CI, сервер), и локальный вход не должен её перебивать.
- * Браузерная сессия обновляется заранее, за минуту до истечения, чтобы человек не
- * ловил 401 на ровном месте.
+ * The token for a request. The environment variable wins: it is only ever set on
+ * purpose, on CI or a server, and a local sign-in should not quietly override it.
+ * A browser session is renewed a minute before it expires, so nobody meets a 401
+ * they could have avoided.
  */
 async function accessToken() {
   if (process.env.HIRIFY_KEY) return process.env.HIRIFY_KEY
 
   const session = readSession()
-  if (!session) die(NOT_LOGGED_IN)
+  if (!session) die(NOT_SIGNED_IN)
 
   if (session.kind === 'oauth' && session.expires_at && session.expires_at - 60 <= now()) {
     return (await refreshSession(session)).access_token
@@ -114,7 +115,7 @@ async function accessToken() {
   return session.access_token
 }
 
-// ── HTTP к API ─────────────────────────────────────────────────────────────
+// ── talking to the API ─────────────────────────────────────────────────────
 async function request(path, method, token) {
   try {
     return await fetch(`${API}/api${path}`, {
@@ -122,15 +123,15 @@ async function request(path, method, token) {
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
     })
   } catch (e) {
-    die(`кажется, сеть недоступна: ${e.message}`)
+    die(`the network seems to be unavailable: ${e.message}`)
   }
 }
 
 async function api(path, { method = 'GET' } = {}) {
   let res = await request(path, method, await accessToken())
 
-  // 401 на живой сессии - обычное дело: токен могли отозвать при ротации refresh.
-  // Один тихий обмен и повтор, и только потом отправляем человека входить заново.
+  // A 401 on a live session is ordinary: the access token is dropped when the refresh
+  // token rotates. One quiet exchange and a retry, and only then ask for a new sign-in.
   if (res.status === 401 && !process.env.HIRIFY_KEY) {
     const session = readSession()
     if (session?.kind === 'oauth' && session.refresh_token) {
@@ -141,33 +142,33 @@ async function api(path, { method = 'GET' } = {}) {
 
   if (res.status === 401) {
     die(process.env.HIRIFY_KEY || readSession()?.kind === 'key'
-      ? 'ключ не принят (401). Кажется, он отозван или скопирован не целиком.'
-      : 'кажется, вход больше не действует. Пожалуйста, выполните `hirify login` ещё раз.')
+      ? 'the key was not accepted (401). It may have been revoked, or copied incompletely.'
+      : 'your sign-in is no longer valid. Please run `hirify login` again.')
   }
-  if (res.status === 403) die('нет доступа (403). Нужен активный платный тариф, либо у доступа нет нужного права.')
-  if (res.status === 404) die('не найдено (404).')
-  if (res.status === 429) die('дневной лимит исчерпан (429). Он обнуляется в 00:00.')
+  if (res.status === 403) die('no access (403). This needs an active paid plan, or the sign-in is missing a permission.')
+  if (res.status === 404) die('not found (404).')
+  if (res.status === 429) die("today's reveal limit is used up (429). It resets at midnight.")
   const body = await res.json().catch(() => null)
   if (!res.ok) {
-    // Всё ожидаемое разобрано выше. Сюда попадает то, чего мы не ждали, и раньше
-    // человек получал тут сырое тело ответа: код, служебные поля, слово API. Ответ
-    // сервера нужен для разбора, а не для чтения, поэтому он уходит за HIRIFY_DEBUG.
+    // Everything expected is handled above. What lands here is not, and it used to print
+    // the raw response body: status codes and internal fields in front of a person. The
+    // answer is for debugging, not for reading, so it goes behind HIRIFY_DEBUG.
     if (process.env.HIRIFY_DEBUG) {
-      console.error(`hirify: ответ сервера ${res.status}: ${body ? JSON.stringify(body) : '(пустое тело)'}`)
+      console.error(`hirify: server answered ${res.status}: ${body ? JSON.stringify(body) : '(empty body)'}`)
     }
     die(res.status >= 500
-      ? 'кажется, что-то пошло не так на нашей стороне. Пожалуйста, попробуйте ещё раз через минуту.'
-      : 'кажется, эту команду выполнить не удалось. Пожалуйста, проверьте, что в ней всё верно, и попробуйте ещё раз.')
+      ? 'something went wrong on our side. Please try again in a minute.'
+      : 'that command could not be completed. Please check it and try again.')
   }
-  // Отдаём тело ЦЕЛИКОМ: у списков рядом с `data` едет `meta` (total/last_page),
-  // и в --json агент должен видеть её тоже. Разворачивают уже команды.
+  // Return the WHOLE body: lists carry `meta` (total/last_page) next to `data`, and an
+  // agent reading --json needs it too. Unwrapping happens in the commands.
   return body
 }
 
-// ── OAuth: вход через браузер ──────────────────────────────────────────────
+// ── signing in through the browser ─────────────────────────────────────────
 /**
- * Адреса сервера авторизации. Спрашиваем их у него самого (RFC 8414), а не зашиваем:
- * если ручки переедут, CLI поедет за ними. Если документа нет - идём по умолчанию.
+ * Where the authorization server lives. We ask it rather than hardcode it (RFC 8414),
+ * so the CLI follows if the endpoints move. No document, no problem: use the defaults.
  */
 async function discover() {
   const fallback = {
@@ -189,7 +190,7 @@ async function discover() {
   }
 }
 
-/** Тело формы, а не JSON: так требует RFC 6749, и так эту ручку ждёт сервер. */
+/** A form body, not JSON: RFC 6749 requires it and the server expects it. */
 async function postForm(url, params) {
   let res
   try {
@@ -199,15 +200,15 @@ async function postForm(url, params) {
       body: new URLSearchParams(params),
     })
   } catch (e) {
-    die(`кажется, сеть недоступна: ${e.message}`)
+    die(`the network seems to be unavailable: ${e.message}`)
   }
   const body = await res.json().catch(() => null)
   return { ok: res.ok, status: res.status, body }
 }
 
 /**
- * Слушаем ответ браузера на петле. Порт занимаем эфемерный (0): так он свободен
- * всегда, и два входа подряд не дерутся за один и тот же номер.
+ * Listen for the browser on the loopback interface. The port is ephemeral (0), so it is
+ * always free and two sign-ins in a row never fight over the same number.
  */
 async function startCallbackServer() {
   let settle
@@ -227,8 +228,8 @@ async function startCallbackServer() {
       code: url.searchParams.get('code'),
       state: url.searchParams.get('state'),
       error,
-      // Пояснение к отказу присылает сервер, и только когда отказал он сам.
-      // Человек, нажавший «отказать», приезжает без него - по этому и различаем.
+      // Only the server attaches a description, and only when the server itself refused.
+      // A person pressing "deny" arrives without one, which is how we tell them apart.
       description: url.searchParams.get('error_description'),
     })
   })
@@ -238,7 +239,7 @@ async function startCallbackServer() {
     server.once('error', onError)
     server.listen(0, '127.0.0.1', () => {
       server.off('error', onError)
-      // Дальше падать из-за одного кривого запроса от браузера незачем.
+      // Past this point one malformed browser request should not bring the CLI down.
       server.on('error', () => {})
       resolve()
     })
@@ -248,16 +249,16 @@ async function startCallbackServer() {
 }
 
 /**
- * Страница, которую человек видит в браузере после подтверждения. «Вы вошли» тут не
- * пишем: обмен кода на токены случится уже после ответа браузеру, и обещать его итог
- * страница не может - итог человек увидит в терминале.
+ * What the person sees in the browser. It does not say "you are signed in": the code is
+ * exchanged for tokens after this page is served, and the page cannot promise the result.
+ * The result belongs in the terminal.
  */
 function browserPage(error) {
-  const title = error ? 'Вход не завершён' : 'Подтверждение получено'
+  const title = error ? 'Sign-in was not completed' : 'Confirmation received'
   const text = error
-    ? 'Кажется, подключение не завершилось. Пожалуйста, вернитесь в терминал и попробуйте ещё раз.'
-    : 'Можно закрыть эту вкладку и вернуться в терминал.'
-  return `<!doctype html><html lang="ru"><meta charset="utf-8">
+    ? 'Please return to your terminal and try again.'
+    : 'You can close this tab and return to your terminal.'
+  return `<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Hirify</title>
 <style>
@@ -272,8 +273,8 @@ function browserPage(error) {
 }
 
 /**
- * Открыть браузер. Успех тут - «команда запустилась»: узнать, что человек её реально
- * увидел, мы не можем, поэтому ссылку в терминал печатаем в любом случае.
+ * Open the browser. Success here means the command started: whether a window actually
+ * appeared is not something we can know, so the link is printed either way.
  */
 function openBrowser(url) {
   const candidates = process.env.BROWSER
@@ -306,14 +307,14 @@ async function cmdLogin(args) {
   try {
     listener = await startCallbackServer()
   } catch (e) {
-    die('кажется, не удалось открыть локальный адрес для ответа браузера: ' + e.message +
-      '\n        Пожалуйста, войдите ключом: `hirify auth <ключ>` (hirify.me/account/api-access).')
+    die('could not open a local address for the browser to answer on: ' + e.message +
+      '\n        Please sign in with a key instead: `hirify auth <key>` (hirify.me/account/api-access).')
   }
 
   const redirectUri = `http://127.0.0.1:${listener.port}${CALLBACK_PATH}`
 
-  // Клиент регистрируем на каждый вход: адрес возврата сверяется точь-в-точь,
-  // а порт у нас каждый раз новый. Секрета у клиента нет, подмену держит PKCE.
+  // A client is registered on every sign-in: the return address is matched exactly and
+  // our port is new each time. The client holds no secret; PKCE is what protects the code.
   let clientId
   try {
     const res = await fetch(endpoints.registration_endpoint, {
@@ -324,12 +325,12 @@ async function cmdLogin(args) {
     const body = await res.json().catch(() => null)
     if (!res.ok || !body?.client_id) {
       listener.close()
-      die(`кажется, не удалось начать вход: сервер ответил ${res.status}. Пожалуйста, попробуйте ещё раз.`)
+      die(`could not start the sign-in: the server answered ${res.status}. Please try again.`)
     }
     clientId = body.client_id
   } catch (e) {
     listener.close()
-    die(`кажется, сеть недоступна: ${e.message}`)
+    die(`the network seems to be unavailable: ${e.message}`)
   }
 
   const verifier = b64url(randomBytes(32))
@@ -348,42 +349,42 @@ async function cmdLogin(args) {
 
   const opened = noBrowser ? false : await openBrowser(authUrl)
   console.log(opened
-    ? 'Открываем браузер, подтвердите доступ на hirify.me.'
-    : 'Пожалуйста, откройте эту ссылку в браузере и подтвердите доступ:')
+    ? 'Opening your browser. Please confirm access on hirify.me.'
+    : 'Please open this link in your browser and confirm access:')
   if (!opened) console.log(`\n${authUrl}\n`)
-  else console.log(`Если браузер не открылся, откройте ссылку вручную:\n${authUrl}`)
+  else console.log(`If it did not open, use this link:\n${authUrl}`)
 
   const timeout = new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), LOGIN_TIMEOUT_MS))
   const answer = await Promise.race([listener.received, timeout])
   listener.close()
 
   if (answer.timedOut) {
-    // Отказ по тарифу сервер показывает страницей, а не возвратом на петлю: браузер
-    // остаётся на ней, а мы молча ждём до конца. Подсказка тут - единственное место,
-    // где человек узнает, что дело в доступе, а не в команде.
-    die('мы не дождались подтверждения в браузере. Пожалуйста, выполните `hirify login` ещё раз.' +
-      '\n        Если браузер написал, что доступ к API пока не подключён - дело в тарифе,' +
-      '\n        а не в команде: hirify.me/account/api-access')
+    // Older servers show a refusal as a page on their own domain instead of returning it
+    // here, and then the browser stops there while we wait out the clock. This hint is
+    // the only place a person learns it was about access rather than about the command.
+    die('we did not get a confirmation in the browser. Please run `hirify login` again.' +
+      '\n        If the browser said API access is not enabled, that is about your plan,' +
+      '\n        not about the command: hirify.me/account/api-access')
   }
   if (answer.error === 'access_denied') {
-    // Пояснение сервер шлёт по-английски и для программы (так велит спека: только
-    // ASCII). Человеку показываем своими словами, а машинную строку прячем за
-    // HIRIFY_DEBUG, иначе в русский вывод влезает чужой английский текст.
+    // The server sends its description for a program to read, in ASCII, as the spec
+    // requires. A person gets our own sentence; the machine string stays behind
+    // HIRIFY_DEBUG rather than sitting in the middle of the normal output.
     if (answer.description) {
-      if (process.env.HIRIFY_DEBUG) console.error(`hirify: сервер отказал: ${answer.description}`)
-      die('кажется, для этого аккаунта доступ к API пока не открыт, ничего не сохранено.' +
-        '\n        Подробности и подключение: hirify.me/account/api-access')
+      if (process.env.HIRIFY_DEBUG) console.error(`hirify: the server refused: ${answer.description}`)
+      die('API access is not enabled for this account, and nothing was saved.' +
+        '\n        Details and how to enable it: hirify.me/account/api-access')
     }
-    die('доступ не подтверждён, ничего не сохранено. Если это вышло случайно, выполните `hirify login` ещё раз.')
+    die('access was not confirmed and nothing was saved. If that was a mistake, run `hirify login` again.')
   }
   if (answer.error) {
-    die('кажется, вход не завершился. Пожалуйста, выполните `hirify login` ещё раз.')
+    die('the sign-in did not finish. Please run `hirify login` again.')
   }
   if (answer.state !== state) {
-    die('кажется, ответ браузера пришёл не от того входа. Пожалуйста, выполните `hirify login` ещё раз.')
+    die('the browser answered a different sign-in. Please run `hirify login` again.')
   }
   if (!answer.code) {
-    die('кажется, браузер вернулся без кода подтверждения. Пожалуйста, выполните `hirify login` ещё раз.')
+    die('the browser came back without a confirmation code. Please run `hirify login` again.')
   }
 
   const { ok, body } = await postForm(endpoints.token_endpoint, {
@@ -395,10 +396,10 @@ async function cmdLogin(args) {
   })
 
   if (!ok || !body?.access_token) {
-    // Код подтверждения живёт пять минут и срабатывает один раз. Чаще всего сюда
-    // приходят те, у кого он успел истечь, поэтому просим просто войти заново.
-    die('кажется, вход не завершился: подтверждение устарело или уже было использовано.' +
-      '\n        Пожалуйста, выполните `hirify login` ещё раз.')
+    // The confirmation code lives five minutes and works once. Most arrivals here simply
+    // took too long, so the useful advice is to start again.
+    die('the sign-in did not finish: the confirmation expired or was already used.' +
+      '\n        Please run `hirify login` again.')
   }
 
   writeSession({
@@ -412,23 +413,23 @@ async function cmdLogin(args) {
     expires_at: body.expires_in ? now() + Number(body.expires_in) : null,
   })
 
-  console.log(`\nГотово, вы вошли. Доступ сохранён: ${AUTH_FILE}`)
-  // Показываем остаток сразу: это первое, что человек всё равно спросит.
+  console.log(`\nSigned in. Access saved to ${AUTH_FILE}`)
+  // Show the remaining limit right away: it is the first thing anyone asks anyway.
   try {
     await cmdMe()
   } catch {
-    // Вход состоялся, а справка по тарифу не обязательна.
+    // The sign-in worked; the plan summary is a nicety, not a requirement.
   }
-  console.log('\nПравила работы для агента: npx skills add hirifyme/hirify')
+  console.log('\nRules for your agent: npx skills add hirifyme/hirify-cli')
 }
 
 /**
- * Обмен refresh на новую пару. Refresh ротируется на каждом обмене, поэтому пишем
- * файл сразу: потерять новый refresh дороже, чем лишний раз записать файл.
+ * Trade the refresh token for a new pair. It rotates on every exchange, so the file is
+ * written immediately: losing the new refresh token costs more than one extra write.
  */
 async function refreshSession(session) {
   if (!session.refresh_token) {
-    die('кажется, вход устарел. Пожалуйста, выполните `hirify login` ещё раз.')
+    die('your sign-in has expired. Please run `hirify login` again.')
   }
 
   const { ok, body } = await postForm(session.token_endpoint || `${API}/oauth/token`, {
@@ -438,7 +439,7 @@ async function refreshSession(session) {
   })
 
   if (!ok || !body?.access_token) {
-    die('кажется, вход устарел. Пожалуйста, выполните `hirify login` ещё раз.')
+    die('your sign-in has expired. Please run `hirify login` again.')
   }
 
   const fresh = {
@@ -454,20 +455,20 @@ async function refreshSession(session) {
 
 function cmdLogout() {
   console.log(forgetSession()
-    ? 'Готово, вы вышли на этом компьютере.'
-    : 'Здесь и так никто не вошёл.')
+    ? 'Signed out on this computer.'
+    : 'Nobody is signed in here.')
 }
 
-// ── команды ────────────────────────────────────────────────────────────────
+// ── commands ───────────────────────────────────────────────────────────────
 async function cmdMe() {
   const body = await api('/agent/me')
   const d = body?.data ?? {}
   const q = d?.quota?.reveal
   const u = d?.usage?.reveal
   out(body, () => {
-    console.log(`тариф:  ${d?.plan ?? '-'}`)
-    if (q) console.log(`лимит:  ${q.used} / ${q.limit} раскрытий сегодня (осталось ${q.remaining})`)
-    if (u) console.log(`расход: ${u.today} сегодня · ${u.last_7d} за 7д · ${u.last_30d} за 30д`)
+    console.log(`plan:    ${d?.plan ?? '-'}`)
+    if (q) console.log(`reveals: ${q.used} of ${q.limit} used today (${q.remaining} left)`)
+    if (u) console.log(`usage:   ${u.today} today · ${u.last_7d} in 7d · ${u.last_30d} in 30d`)
   })
 }
 
@@ -475,23 +476,23 @@ async function cmdFeeds() {
   const body = await api('/agent/feeds')
   const list = body?.data ?? []
   out(body, () => {
-    if (!list.length) return console.log('фидов пока нет. Сохраните фильтр на hirify.me, и он станет фидом')
+    if (!list.length) return console.log('You have no feeds yet. Save a filter on hirify.me and it becomes a feed.')
     for (const f of list) {
-      const off = f.is_active === false ? '  (выключен)' : ''
-      console.log(`${String(f.id).padEnd(6)} ${f.name || '(без названия)'}${off}`)
+      const off = f.is_active === false ? '  (off)' : ''
+      console.log(`${String(f.id).padEnd(6)} ${f.name || '(untitled)'}${off}`)
     }
-    console.log(`\nВакансии из фида: hirify feed <id>`)
+    console.log(`\nVacancies from a feed: hirify feed <id>`)
   })
 }
 
-// Поля - строго из AgentVacancyResource: контактов в карточке нет by design,
-// компания у премиум-компаний приезжает маскированной (company_masked).
+// Fields come straight from the API's vacancy resource: a card carries no contacts by
+// design, and for premium companies the name arrives masked.
 function printVacancies(list, meta) {
-  if (!list.length) return console.log('ничего не найдено')
+  if (!list.length) return console.log('Nothing found.')
   for (const v of list) {
-    // `company_masked` - это ФЛАГ «имя скрыто до раскрытия», а не строка с именем.
-    // Раньше он печатался как есть, и в карточке появлялось «- true».
-    const company = v.company || (v.company_masked ? 'компания скрыта' : '-')
+    // `company_masked` is a FLAG meaning "the name is hidden until you reveal", not the
+    // name itself. It used to be printed as it came, and cards ended up saying "- true".
+    const company = v.company || (v.company_masked ? 'company hidden' : '-')
     const bits = [v.remote_type, v.work_format, v.employee_type, v.english_level].filter(Boolean)
     if (v.salary && (v.salary.min || v.salary.max)) {
       const { min, max, currency } = v.salary
@@ -501,12 +502,12 @@ function printVacancies(list, meta) {
     console.log(`${v.slug}\n  ${v.title || '-'} · ${company}${bits.length ? `\n  [${bits.join(' · ')}]` : ''}`)
   }
   const total = meta?.total
-  console.log(`\nПоказано ${list.length}${total ? ` из ${total}` : ''}. Куда откликнуться: hirify reveal <slug> (тратит 1 из лимита).`)
+  console.log(`\nShowing ${list.length}${total ? ` of ${total}` : ''}. Where to apply: hirify reveal <slug> (uses 1 reveal).`)
 }
 
 async function cmdFeed(args) {
   const id = args[0]
-  if (!id) die('нужен id фида: hirify feed <id>  (список: hirify feeds)')
+  if (!id) die('a feed id is required: hirify feed <id>  (list them with hirify feeds)')
   const limit = flag(args, '--limit')
   const body = await api(`/agent/feeds/${encodeURIComponent(id)}/vacancies${limit ? `?per_page=${limit}` : ''}`)
   out(body, () => printVacancies(body?.data ?? [], body?.meta))
@@ -522,7 +523,7 @@ async function cmdSearch(args) {
   out(body, () => printVacancies(body?.data ?? [], body?.meta))
 }
 
-/** Строка контакта: адрес как есть, тип - только если он что-то добавляет. */
+/** One contact line: the address as it is, with the type only when it adds something. */
 function contactLine(c) {
   if (typeof c === 'string') return c
   const value = c?.value ?? c?.url ?? c?.email ?? null
@@ -532,42 +533,42 @@ function contactLine(c) {
 
 async function cmdReveal(args) {
   const slug = args[0]
-  if (!slug) die('нужен slug: hirify reveal <slug>')
+  if (!slug) die('a slug is required: hirify reveal <slug>')
   const body = await api(`/agent/vacancies/${encodeURIComponent(slug)}/reveal`, { method: 'POST' })
   const d = body?.data ?? {}
   out(body, () => {
-    console.log(`компания: ${d.company ?? '-'}`)
+    console.log(`company:  ${d.company ?? '-'}`)
     if (d.linkedin) console.log(`linkedin: ${d.linkedin}`)
-    // Контакт приезжает объектом {type, value, short_code}. Человеку и агенту нужен
-    // сам адрес, а не его JSON: сырой объект в выводе никто не разбирает руками.
-    for (const c of d.contacts ?? []) console.log(`контакт:  ${contactLine(c)}`)
+    // A contact arrives as {type, value, short_code}. People and agents want the address,
+    // not its JSON: nobody unpacks a raw object by hand while reading a terminal.
+    for (const c of d.contacts ?? []) console.log(`contact:  ${contactLine(c)}`)
     console.log(d.charged === false
-      ? '\n(лимит не потрачен: эта вакансия уже раскрывалась)'
-      : '\n(потрачено 1 раскрытие)')
+      ? '\n(no reveal used: you have revealed this vacancy before)'
+      : '\n(1 reveal used)')
     const q = d.quota
-    if (q) console.log(`осталось ${q.remaining} из ${q.limit} на сегодня`)
+    if (q) console.log(`${q.remaining} of ${q.limit} left today`)
   })
 }
 
-/** Запасной вход для CI и серверов, где браузера нет. Обычный путь - `hirify login`. */
+/** The fallback for CI and servers with no browser. The normal way in is `hirify login`. */
 function cmdAuth(args) {
   const key = args[0]
   if (!key) {
-    die('вход через браузер: `hirify login`.\n' +
-      '        Ключом (CI, сервер): `hirify auth <ключ>`, ключ на hirify.me/account/api-access')
+    die('to sign in through the browser: `hirify login`.\n' +
+      '        With a key (CI, servers): `hirify auth <key>`, from hirify.me/account/api-access')
   }
   writeSession({ kind: 'key', access_token: key })
   if (existsSync(LEGACY_KEY_FILE)) rmSync(LEGACY_KEY_FILE)
-  console.log(`Ключ сохранён: ${AUTH_FILE}`)
+  console.log(`Key saved to ${AUTH_FILE}`)
 }
 
-/** Скилл теперь раздаётся через skills.sh: одна команда ставит его во все харнессы сразу. */
+/** The skill ships through skills.sh now: one command installs it into every harness. */
 function cmdSkill() {
-  console.log('Правила работы для агента ставятся одной командой:\n\n  npx skills add hirifyme/hirify\n')
-  console.log('Она кладёт их туда, где их читает ваш агент: Claude Code, Codex, Cursor, OpenCode и другие.')
+  console.log('The rules for your agent install with one command:\n\n  npx skills add hirifyme/hirify-cli\n')
+  console.log('It puts them where your agent reads them: Claude Code, Codex, Cursor, OpenCode and others.')
 }
 
-// ── роутер ─────────────────────────────────────────────────────────────────
+// ── router ─────────────────────────────────────────────────────────────────
 const [cmd, ...args] = process.argv.slice(2)
 const routes = {
   login: cmdLogin, logout: cmdLogout, auth: cmdAuth,
@@ -576,5 +577,5 @@ const routes = {
 }
 
 if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') { console.log(HELP); process.exit(0) }
-if (!routes[cmd]) die(`неизвестная команда: ${cmd}\n\n${HELP}`)
+if (!routes[cmd]) die(`unknown command: ${cmd}\n\n${HELP}`)
 await routes[cmd](args)

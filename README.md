@@ -1,68 +1,78 @@
 # hirify
 
-Hirify CLI - доступ AI-агента к вакансиям [Hirify](https://hirify.me): ваши фиды, поиск и «куда
-откликнуться».
+Job search for AI agents. Search [Hirify](https://hirify.me) vacancies, read the feeds you saved on
+the site, and get the contact to apply to.
 
-CLI - одна из **двух равноправных дверей** к одному и тому же API. Вторая - MCP
-(`https://api.hirify.me/api/mcp`). Обе first-party, обе живут над одними сервисами: берите ту, в
-которой живёт ваш агент. CLI экономнее по токенам, поэтому для локальных агентов в терминале он
-обычно удобнее.
+Node 18 or newer. No dependencies.
 
-## Начало
+## Getting started
 
 ```bash
-npx hirify login                  # вход: откроется браузер, подтвердите доступ
-npx skills add hirifyme/hirify    # правила работы для вашего агента
+npx hirify login
 ```
 
-Первая команда открывает браузер, вы подтверждаете доступ на hirify.me, и терминал продолжает сам.
-Копировать ничего не нужно. Вторая кладёт инструкцию для агента туда, где он её прочитает: Claude
-Code, Codex, Cursor, OpenCode и другие ([skills.sh](https://skills.sh)).
+Your browser opens, you confirm access on hirify.me, and the terminal continues on its own. Nothing
+to copy back.
 
 ```bash
-hirify me                    # тариф и остаток дневного лимита
-hirify feeds                 # сохранённые фиды (это ваши же фильтры с сайта)
-hirify feed <id>             # вакансии по фиду         [--limit N]
-hirify search "senior go"    # если подходящего фида нет [--limit N] [--grade G]
-hirify reveal <slug>         # КУДА ОТКЛИКНУТЬСЯ, тратит 1 из дневного лимита
-hirify logout                # выйти на этом компьютере
+npx skills add hirifyme/hirify-cli
 ```
 
-Любая команда принимает `--json`, берите его для разбора программой.
+This installs the rules your agent follows when it uses Hirify: what is free, what costs a reveal,
+and in which order to work. It lands where your agent reads it, including Claude Code, Codex, Cursor
+and OpenCode. See [skills.sh](https://skills.sh).
 
-## Лимиты
-
-- **Чтение бесплатно и без ограничений** (`me`, `feeds`, `feed`, `search`), читайте сколько нужно.
-- **`reveal` тратит 1 из дневного лимита** - это единственная платная операция.
-- Повторный `reveal` той же вакансии **бесплатный** (дедуп на сервере).
-- Лимит обнуляется в 00:00. Остаток всегда виден в `hirify me`.
-
-Сначала отбирайте чтением и раскрывайте только подходящее: лимит стоит для живых людей с агентами,
-а не для выкачки базы.
-
-## Вход
-
-`hirify login` открывает браузер и сохраняет доступ в `~/.config/hirify/auth.json` (права 600).
-Дальше CLI продлевает его сам, повторно подтверждать не придётся. `hirify logout` забывает доступ на
-этом компьютере.
-
-Там, где браузера нет - CI, сервер, контейнер - работает ключ из кабинета
-([hirify.me/account/api-access](https://hirify.me/account/api-access)):
+## Commands
 
 ```bash
-hirify auth <ключ>           # сохранит ключ в тот же файл
-HIRIFY_KEY=<ключ> hirify me  # либо переменной окружения, она в приоритете
+hirify me                    # your plan and today's remaining reveals
+hirify feeds                 # the feeds you saved on the site
+hirify feed <id>             # vacancies from one feed      [--limit N]
+hirify search "senior go"    # search vacancies             [--limit N] [--grade G]
+hirify reveal <slug>         # where to apply: uses 1 reveal
+hirify logout                # sign out on this computer
 ```
 
-Ключ можно отозвать в кабинете в любой момент.
+Every command takes `--json` if you want to parse the output instead of reading it.
 
-## Если что-то пошло не так
+## Limits
 
-Команды объясняют, что случилось, обычными словами. Когда нужен сам ответ сервера, чтобы приложить
-его к письму в поддержку, поставьте перед командой `HIRIFY_DEBUG=1`.
+Reading is free and unlimited: `me`, `feeds`, `feed` and `search`.
 
-## Откликов нет
+`reveal` is the only metered call. It spends 1 of your daily limit and returns the company, its
+LinkedIn page and where to send the application. Revealing the same vacancy again is free. The limit
+resets at midnight, and `hirify me` always shows what is left.
 
-Ручки отклика в API нет. CLI приносит ссылку и контакт, а отклик отправляет человек.
+Pick with reading first and reveal only what fits. The limit is there for people applying to jobs,
+not for copying the database.
 
-Требуется Node 18+. Зависимостей нет.
+## Signing in
+
+`hirify login` stores access in `~/.config/hirify/auth.json` with `0600` permissions and renews it
+on its own, so you confirm once. `hirify logout` forgets it on this computer.
+
+Where there is no browser, on CI or a server, use a key from
+[your account](https://hirify.me/account/api-access):
+
+```bash
+hirify auth <key>            # stores it in the same file
+HIRIFY_KEY=<key> hirify me   # or pass it in the environment, which takes priority
+```
+
+You can revoke the key from your account at any time.
+
+## Troubleshooting
+
+Commands explain problems in plain words. When you need the server's own answer to attach to a
+support request, put `HIRIFY_DEBUG=1` in front of the command.
+
+## There is no apply endpoint
+
+Hirify does not send applications for you, and the API has no call for it. The CLI brings back the
+link and the contact; a person sends the application.
+
+## MCP
+
+The same API is available as an MCP server at `https://api.hirify.me/api/mcp`, with the same
+account. Use whichever your agent supports. The CLI is usually cheaper in tokens for agents running
+in a terminal.
