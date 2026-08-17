@@ -227,6 +227,9 @@ async function startCallbackServer() {
       code: url.searchParams.get('code'),
       state: url.searchParams.get('state'),
       error,
+      // Пояснение к отказу присылает сервер, и только когда отказал он сам.
+      // Человек, нажавший «отказать», приезжает без него - по этому и различаем.
+      description: url.searchParams.get('error_description'),
     })
   })
 
@@ -363,6 +366,14 @@ async function cmdLogin(args) {
       '\n        а не в команде: hirify.me/account/api-access')
   }
   if (answer.error === 'access_denied') {
+    // Пояснение сервер шлёт по-английски и для программы (так велит спека: только
+    // ASCII). Человеку показываем своими словами, а машинную строку прячем за
+    // HIRIFY_DEBUG, иначе в русский вывод влезает чужой английский текст.
+    if (answer.description) {
+      if (process.env.HIRIFY_DEBUG) console.error(`hirify: сервер отказал: ${answer.description}`)
+      die('кажется, для этого аккаунта доступ к API пока не открыт, ничего не сохранено.' +
+        '\n        Подробности и подключение: hirify.me/account/api-access')
+    }
     die('доступ не подтверждён, ничего не сохранено. Если это вышло случайно, выполните `hirify login` ещё раз.')
   }
   if (answer.error) {

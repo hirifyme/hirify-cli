@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "description": "Hirify CLI for AI agents - browser login, job feeds, vacancy search and \"where to apply\" reveals.",
   "bin": { "hirify": "bin/hirify.js" },
+  "scripts": { "prepublishOnly": "node scripts/prepublish-check.mjs" },
   "type": "module",
   "engines": { "node": ">=18" },
   "files": ["bin", "skills", "README.md"],
