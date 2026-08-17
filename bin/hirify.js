@@ -532,7 +532,11 @@ function printVacancies(list, meta) {
     // `company_masked` is a FLAG meaning "the name is hidden until you reveal", not the
     // name itself. It used to be printed as it came, and cards ended up saying "- true".
     const company = v.company || (v.company_masked ? 'company hidden' : '-')
-    const bits = [v.remote_type, v.work_format, v.employee_type, v.english_level].filter(Boolean)
+    // Some of these arrive as arrays: live data has `work_format: []` next to
+    // `employee_type: ['employment']`. An empty array is truthy, so it used to survive
+    // the filter and print as a blank slot between two separators: "[usa ·  · b2]".
+    const label = (x) => (Array.isArray(x) ? x.filter(Boolean).join('/') : x)
+    const bits = [v.remote_type, v.work_format, v.employee_type, v.english_level].map(label).filter(Boolean)
     if (v.salary && (v.salary.min || v.salary.max)) {
       const { min, max, currency } = v.salary
       bits.push([min, max].filter(Boolean).join('-') + (currency ? ` ${currency}` : ''))
@@ -619,7 +623,7 @@ async function cmdFeedback(args) {
   const res = await api('/agent/feedback', {
     method: 'POST',
     payload: { type, title, body: text, ...(vacancy ? { vacancy_slug: vacancy } : {}) },
-    allow: [201, 202, 422, 429, 502, 503],
+    allow: [201, 202, 404, 422, 429, 502, 503],
   })
 
   const d = res.body?.data ?? {}
@@ -635,7 +639,10 @@ async function cmdFeedback(args) {
     die('we could not pass your report on. That is a fault on our side, not in what you wrote.' +
       '\n        Please try again a bit later.')
   }
-  if (res.status === 503) {
+  if (res.status === 404 || res.status === 503) {
+    // 404 means this API does not have the feedback endpoint at all, 503 that it has it
+    // and it is switched off. Both are the same fact for the person in front of us, and
+    // "not found (404)" would send them looking for a mistake in their own command.
     die('the feedback channel is not available right now. Please try again later.')
   }
   if (res.status === 422) {
