@@ -1,11 +1,38 @@
 {
   "name": "hirify",
-  "version": "0.1.0",
-  "description": "Hirify CLI for AI agents — job feeds, vacancy search and \"where to apply\" reveals, over your Hirify Pro key.",
-  "bin": { "hirify": "bin/hirify.js" },
+  "version": "0.3.0",
+  "description": "Hirify CLI: job search for AI agents. Browser sign-in, saved feeds, search, and the contact to apply to.",
+  "bin": {
+    "hirify": "bin/hirify.js"
+  },
+  "scripts": {
+    "prepublishOnly": "node scripts/prepublish-check.mjs"
+  },
   "type": "module",
-  "engines": { "node": ">=18" },
-  "files": ["bin", "SKILL.md", "README.md"],
-  "keywords": ["hirify", "jobs", "ai-agent", "cli", "job-search", "mcp"],
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "skills",
+    "README.md"
+  ],
+  "keywords": [
+    "hirify",
+    "jobs",
+    "ai-agent",
+    "cli",
+    "job-search",
+    "mcp",
+    "skills"
+  ],
+  "homepage": "https://hirify.me",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hirifyme/hirify-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hirifyme/hirify-cli/issues"
+  },
   "license": "MIT"
 }
