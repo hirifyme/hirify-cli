@@ -54,9 +54,10 @@ hirify feedback bug "Reveal answers 500 on archived vacancies" --body "What happ
 hirify feedback feature "Filter by salary currency" --body "What you need and why."
 ```
 
-It goes to the Hirify team under your name and comes back with a ticket link, or with a note that
-the number will follow. Add `--vacancy <slug>` when it is about one vacancy. This is free and does
-not touch your reveal limit.
+It goes to the Hirify team under your name and comes back with a ticket number, or with a note that
+there is no number yet. A report has no page you can open and nothing writes back to you, so keep
+the number if you want to refer to it later. Add `--vacancy <slug>` when it is about one vacancy.
+This is free and does not touch your reveal limit.
 
 ## Signing in
 

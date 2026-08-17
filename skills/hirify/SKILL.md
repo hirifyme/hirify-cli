@@ -55,8 +55,9 @@ hirify feedback feature "Filter by salary currency" --body "<what the user needs
 - The title needs 5 to 140 characters, the body 10 to 5000.
 - One report per problem. Do not resend the same thing, and do not turn a single complaint into a
   stream of tickets: there is a limit of a few per minute and it exists for that reason.
-- The answer either carries a ticket link or says the number will follow. Pass that on to the user
-  as it came; do not promise a fix or a date.
+- The answer gives a ticket number, or says there is no number yet. **Report that it was passed on,
+  and stop there.** There is no page the user can open for it, nothing writes back to them, and no
+  reply, fix or date is promised by anyone. Do not invent one.
 
 ## What not to do
 

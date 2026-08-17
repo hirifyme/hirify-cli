@@ -639,12 +639,15 @@ async function cmdFeedback(args) {
     die('the report was not accepted. Please check the title and the text and try again.')
   }
 
+  // A report gets a number and nothing else: there is no public page for it, and nothing
+  // writes back to the person afterwards. So we say it was passed on, and stop there.
+  // Promising a reply that no code sends would be the one thing we must never do.
+  const ticket = d.ticket?.id ?? (typeof d.ticket === 'number' ? d.ticket : null)
+
   out(res.body, () => {
-    if (d.ticket?.url) {
-      console.log(`Thank you. Ticket ${d.ticket.id ?? ''}: ${d.ticket.url}`.replace('  ', ' '))
-    } else {
-      console.log('Thank you, we have your report. The ticket number will follow.')
-    }
+    console.log(ticket
+      ? `Thank you. Your report was passed on as ticket ${ticket}.`
+      : 'Thank you. Your report is with us and on its way to the team, without a number yet.')
     if (d.reference) console.log(`reference: ${d.reference}`)
   })
 }
