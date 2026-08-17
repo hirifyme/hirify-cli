@@ -5,7 +5,7 @@
   "bin": { "hirify": "bin/hirify.js" },
   "type": "module",
   "engines": { "node": ">=18" },
-  "files": ["bin", "SKILL.md", "README.md"],
+  "files": ["bin", "skills", "README.md"],
   "keywords": ["hirify", "jobs", "ai-agent", "cli", "job-search", "mcp", "skills"],
   "homepage": "https://hirify.me",
   "repository": { "type": "git", "url": "git+https://github.com/hirifyme/hirify.git" },

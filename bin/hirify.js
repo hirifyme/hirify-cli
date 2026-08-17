@@ -469,7 +469,7 @@ function printVacancies(list, meta) {
     const bits = [v.remote_type, v.work_format, v.employee_type, v.english_level].filter(Boolean)
     if (v.salary && (v.salary.min || v.salary.max)) {
       const { min, max, currency } = v.salary
-      bits.push([min, max].filter(Boolean).join('–') + (currency ? ` ${currency}` : ''))
+      bits.push([min, max].filter(Boolean).join('-') + (currency ? ` ${currency}` : ''))
     }
     if (v.verified) bits.push('verified')
     console.log(`${v.slug}\n  ${v.title || '-'} · ${company}${bits.length ? `\n  [${bits.join(' · ')}]` : ''}`)
@@ -480,7 +480,7 @@ function printVacancies(list, meta) {
 
 async function cmdFeed(args) {
   const id = args[0]
-  if (!id) die('нужен id фида: hirify feed <id>  (список — hirify feeds)')
+  if (!id) die('нужен id фида: hirify feed <id>  (список: hirify feeds)')
   const limit = flag(args, '--limit')
   const body = await api(`/agent/feeds/${encodeURIComponent(id)}/vacancies${limit ? `?per_page=${limit}` : ''}`)
   out(body, () => printVacancies(body?.data ?? [], body?.meta))
