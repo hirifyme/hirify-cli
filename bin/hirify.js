@@ -619,7 +619,7 @@ async function cmdFeedback(args) {
   const res = await api('/agent/feedback', {
     method: 'POST',
     payload: { type, title, body: text, ...(vacancy ? { vacancy_slug: vacancy } : {}) },
-    allow: [201, 202, 422, 429, 503],
+    allow: [201, 202, 422, 429, 502, 503],
   })
 
   const d = res.body?.data ?? {}
@@ -628,6 +628,12 @@ async function cmdFeedback(args) {
     const wait = Number(res.retryAfter)
     die('that is a lot of reports in a short time.' +
       (Number.isFinite(wait) && wait > 0 ? ` Please try again in ${wait} seconds.` : ' Please try again a bit later.'))
+  }
+  if (res.status === 502) {
+    // Not queued and not retried on our side, because a retry would not fix it. Say that
+    // the fault is ours, so nobody rewrites a perfectly good report thinking it was them.
+    die('we could not pass your report on. That is a fault on our side, not in what you wrote.' +
+      '\n        Please try again a bit later.')
   }
   if (res.status === 503) {
     die('the feedback channel is not available right now. Please try again later.')
@@ -639,15 +645,21 @@ async function cmdFeedback(args) {
     die('the report was not accepted. Please check the title and the text and try again.')
   }
 
-  // A report gets a number and nothing else: there is no public page for it, and nothing
-  // writes back to the person afterwards. So we say it was passed on, and stop there.
-  // Promising a reply that no code sends would be the one thing we must never do.
-  const ticket = d.ticket?.id ?? (typeof d.ticket === 'number' ? d.ticket : null)
+  // Say `number`, never `id`. The number is the one a human at Hirify recognises; the id
+  // is for reading the ticket through their API, and telling a person the id would give
+  // them a number nobody there can look up. There is deliberately no link to a report:
+  // ticket numbers are sequential, and a public address would let anyone walk through
+  // other people's complaints. And nothing writes back afterwards, so we promise nothing.
+  const ticket = d.ticket?.number ?? (typeof d.ticket === 'number' ? d.ticket : null)
 
   out(res.body, () => {
-    console.log(ticket
-      ? `Thank you. Your report was passed on as ticket ${ticket}.`
-      : 'Thank you. Your report is with us and on its way to the team, without a number yet.')
+    if (ticket && d.ticket?.duplicate) {
+      console.log(`Thank you. This matches a report we already have, number ${ticket}.`)
+    } else if (ticket) {
+      console.log(`Thank you. Your report was passed on as number ${ticket}.`)
+    } else {
+      console.log('Thank you. Your report is with us and on its way to the team, without a number yet.')
+    }
     if (d.reference) console.log(`reference: ${d.reference}`)
   })
 }
