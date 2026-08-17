@@ -30,6 +30,7 @@ hirify feeds                 # the feeds you saved on the site
 hirify feed <id>             # vacancies from one feed      [--limit N]
 hirify search "senior go"    # search vacancies             [--limit N] [--grade G]
 hirify reveal <slug>         # where to apply: uses 1 reveal
+hirify feedback <kind> "..." # report a bug or ask for a feature  [--body T]
 hirify logout                # sign out on this computer
 ```
 
@@ -45,6 +46,17 @@ resets at midnight, and `hirify me` always shows what is left.
 
 Pick with reading first and reveal only what fits. The limit is there for people applying to jobs,
 not for copying the database.
+
+## Telling us something is broken
+
+```bash
+hirify feedback bug "Reveal answers 500 on archived vacancies" --body "What happened, and what you expected."
+hirify feedback feature "Filter by salary currency" --body "What you need and why."
+```
+
+It goes to the Hirify team under your name and comes back with a ticket link, or with a note that
+the number will follow. Add `--vacancy <slug>` when it is about one vacancy. This is free and does
+not touch your reveal limit.
 
 ## Signing in
 

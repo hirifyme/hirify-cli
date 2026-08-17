@@ -1,6 +1,6 @@
 {
   "name": "hirify",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Hirify CLI: job search for AI agents. Browser sign-in, saved feeds, search, and the contact to apply to.",
   "bin": {
     "hirify": "bin/hirify.js"

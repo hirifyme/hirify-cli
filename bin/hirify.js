@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
 import { randomBytes, createHash } from 'node:crypto'
@@ -22,10 +23,31 @@ const AUTH_FILE = join(CONFIG_DIR, 'auth.json')
 // The key file from 0.1: still read for anyone who has one, never written again.
 const LEGACY_KEY_FILE = join(CONFIG_DIR, 'key')
 
-const SCOPES = 'agent:read agent:reveal offline_access'
+// Asked for at sign-in, all at once. `agent:feedback` is in here from the start on
+// purpose: an OAuth token carries exactly what the person agreed to, and nothing can add
+// an ability to it later without sending them back through the consent screen.
+const SCOPES = 'agent:read agent:reveal agent:feedback offline_access'
 const CALLBACK_PATH = '/callback'
 // How long we wait for the browser. The authorization code lives the same five minutes.
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000
+
+// Feedback limits, mirrored from the API so a person is told what is wrong before the
+// request is sent, in words, instead of getting a field-error object back.
+const FEEDBACK_TYPES = ['bug', 'feature']
+const TITLE_RANGE = [5, 140]
+const BODY_RANGE = [10, 5000]
+
+// Read from package.json rather than repeated here: the server records which client sent
+// a report, and a version that drifts from the published one makes that record useless.
+const VERSION = (() => {
+  try {
+    const pkg = join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json')
+    return JSON.parse(readFileSync(pkg, 'utf8')).version || '0'
+  } catch {
+    return '0'
+  }
+})()
+const USER_AGENT = `hirify-cli/${VERSION}`
 
 const HELP = `hirify - job search for AI agents
 
@@ -35,6 +57,7 @@ const HELP = `hirify - job search for AI agents
   hirify feed <id>             vacancies from one feed      [--limit N]
   hirify search <query>        search vacancies             [--limit N] [--grade G]
   hirify reveal <slug>         WHERE TO APPLY: uses 1 reveal
+  hirify feedback <kind>       report a bug or ask for a feature  [--body T] [--vacancy S]
   hirify logout                sign out on this computer
 
   --json                       raw JSON instead of text
@@ -116,19 +139,27 @@ async function accessToken() {
 }
 
 // ── talking to the API ─────────────────────────────────────────────────────
-async function request(path, method, token) {
+async function request(path, method, token, payload) {
+  const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': USER_AGENT }
+  if (payload) headers['Content-Type'] = 'application/json'
   try {
     return await fetch(`${API}/api${path}`, {
       method,
-      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      headers,
+      body: payload ? JSON.stringify(payload) : undefined,
     })
   } catch (e) {
     die(`the network seems to be unavailable: ${e.message}`)
   }
 }
 
-async function api(path, { method = 'GET' } = {}) {
-  let res = await request(path, method, await accessToken())
+/**
+ * `allow` lists statuses the caller wants to read itself instead of dying on. Feedback
+ * needs it: a 429 there means "too many reports", not "your reveals are used up", and
+ * saying the wrong one sends the person looking in the wrong place.
+ */
+async function api(path, { method = 'GET', payload = null, allow = [] } = {}) {
+  let res = await request(path, method, await accessToken(), payload)
 
   // A 401 on a live session is ordinary: the access token is dropped when the refresh
   // token rotates. One quiet exchange and a retry, and only then ask for a new sign-in.
@@ -136,7 +167,15 @@ async function api(path, { method = 'GET' } = {}) {
     const session = readSession()
     if (session?.kind === 'oauth' && session.refresh_token) {
       const fresh = await refreshSession(session)
-      res = await request(path, method, fresh.access_token)
+      res = await request(path, method, fresh.access_token, payload)
+    }
+  }
+
+  if (allow.includes(res.status)) {
+    return {
+      status: res.status,
+      body: await res.json().catch(() => null),
+      retryAfter: res.headers.get('retry-after'),
     }
   }
 
@@ -550,6 +589,66 @@ async function cmdReveal(args) {
   })
 }
 
+/**
+ * Report a bug or ask for a feature. Free: it does not touch the reveal limit.
+ *
+ * The length bounds are checked here as well as on the server, so a mistake comes back
+ * as a sentence about the title being too short rather than as a field-error object.
+ */
+async function cmdFeedback(args) {
+  const type = args[0]
+  if (!FEEDBACK_TYPES.includes(type)) {
+    die('say what kind of report this is, bug or feature:\n' +
+      '        hirify feedback bug "<title>" --body "<what happened>"\n' +
+      '        hirify feedback feature "<title>" --body "<what you need>"')
+  }
+
+  const title = args[1] && !args[1].startsWith('--') ? args[1] : null
+  const text = flag(args, '--body')
+  const vacancy = flag(args, '--vacancy')
+
+  if (!title) die('a title is required: hirify feedback ' + type + ' "<title>" --body "<text>"')
+  if (title.length < TITLE_RANGE[0] || title.length > TITLE_RANGE[1]) {
+    die(`the title should be between ${TITLE_RANGE[0]} and ${TITLE_RANGE[1]} characters. Yours is ${title.length}.`)
+  }
+  if (!text) die('the report needs a body: add --body "<text>"')
+  if (text.length < BODY_RANGE[0] || text.length > BODY_RANGE[1]) {
+    die(`the body should be between ${BODY_RANGE[0]} and ${BODY_RANGE[1]} characters. Yours is ${text.length}.`)
+  }
+
+  const res = await api('/agent/feedback', {
+    method: 'POST',
+    payload: { type, title, body: text, ...(vacancy ? { vacancy_slug: vacancy } : {}) },
+    allow: [201, 202, 422, 429, 503],
+  })
+
+  const d = res.body?.data ?? {}
+
+  if (res.status === 429) {
+    const wait = Number(res.retryAfter)
+    die('that is a lot of reports in a short time.' +
+      (Number.isFinite(wait) && wait > 0 ? ` Please try again in ${wait} seconds.` : ' Please try again a bit later.'))
+  }
+  if (res.status === 503) {
+    die('the feedback channel is not available right now. Please try again later.')
+  }
+  if (res.status === 422) {
+    // We check the same bounds above, so this means ours and the server's drifted apart.
+    // The person cannot act on that, so they get a plain sentence and we keep the detail.
+    if (process.env.HIRIFY_DEBUG) console.error(`hirify: server answered 422: ${JSON.stringify(res.body)}`)
+    die('the report was not accepted. Please check the title and the text and try again.')
+  }
+
+  out(res.body, () => {
+    if (d.ticket?.url) {
+      console.log(`Thank you. Ticket ${d.ticket.id ?? ''}: ${d.ticket.url}`.replace('  ', ' '))
+    } else {
+      console.log('Thank you, we have your report. The ticket number will follow.')
+    }
+    if (d.reference) console.log(`reference: ${d.reference}`)
+  })
+}
+
 /** The fallback for CI and servers with no browser. The normal way in is `hirify login`. */
 function cmdAuth(args) {
   const key = args[0]
@@ -573,6 +672,7 @@ const [cmd, ...args] = process.argv.slice(2)
 const routes = {
   login: cmdLogin, logout: cmdLogout, auth: cmdAuth,
   me: cmdMe, feeds: cmdFeeds, feed: cmdFeed, search: cmdSearch, reveal: cmdReveal,
+  feedback: cmdFeedback,
   skill: cmdSkill,
 }
 

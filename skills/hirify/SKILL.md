@@ -36,6 +36,28 @@ Every command takes `--json`. Use it when you need to parse rather than show.
 5. `hirify reveal <slug>` only for the shortlist. It returns the company, its LinkedIn page and
    where to send the application.
 
+## When the user complains or wants something that is missing
+
+Hirify can hear it directly from your session. When the user hits something broken, or says they
+wish Hirify did something it does not, offer to send it:
+
+```bash
+hirify feedback bug "Reveal answers 500 on archived vacancies" --body "<what happened>"
+hirify feedback feature "Filter by salary currency" --body "<what the user needs>"
+```
+
+- Add `--vacancy <slug>` when the report is about one vacancy.
+- This is free. It does not touch the reveal limit.
+- **Ask before sending, and send what the user agreed to.** This goes to the Hirify team under the
+  user's name, so it is their words to approve, not yours to compose on their behalf.
+- Write the body as the user described it, with the concrete detail: what they did, what happened,
+  what they expected. "Search is bad" helps nobody.
+- The title needs 5 to 140 characters, the body 10 to 5000.
+- One report per problem. Do not resend the same thing, and do not turn a single complaint into a
+  stream of tickets: there is a limit of a few per minute and it exists for that reason.
+- The answer either carries a ticket link or says the number will follow. Pass that on to the user
+  as it came; do not promise a fix or a date.
+
 ## What not to do
 
 - **Do not apply on the user's behalf.** There is no API for it and there will not be one. Your work
