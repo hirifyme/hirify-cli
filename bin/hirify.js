@@ -587,9 +587,13 @@ function printVacancies(list, meta) {
 async function cmdFeed(args) {
   // `feed` reads one feed, and it also carries the two verbs that change feeds. Feed ids
   // are numbers, so a word in that position can only be a verb and never an id.
+  // Both halves matter. The verb is found among the positionals, so a flag before it
+  // cannot hide it; and what the sub-command gets is the positionals AFTER the verb, not
+  // the raw argv sliced at index 1. Slicing raw argv broke as soon as a flag stood in
+  // front: `feed --limit 5 delivery 7` used to change the delivery of feed 5.
   const rest = positional(args)
-  if (rest[0] === 'create') return cmdFeedCreate(args.slice(1))
-  if (rest[0] === 'delivery') return cmdFeedDelivery(args.slice(1))
+  if (rest[0] === 'create') return cmdFeedCreate(args, rest.slice(1))
+  if (rest[0] === 'delivery') return cmdFeedDelivery(args, rest.slice(1))
 
   const id = rest[0]
   if (!id) die('a feed id is required: hirify feed <id>  (list them with hirify feeds)')
@@ -768,8 +772,8 @@ async function cmdApply(args) {
 }
 
 /** Save a search, the same thing a person does with the filter form on the site. */
-async function cmdFeedCreate(args) {
-  const [name] = positional(args)
+async function cmdFeedCreate(args, words) {
+  const [name] = words
   if (!name) die('a name is required: hirify feed create "<name>" [--filters \'<json>\']')
   if (name.length > 120) die(`the name should be at most 120 characters. Yours is ${name.length}.`)
 
@@ -801,8 +805,8 @@ async function cmdFeedCreate(args) {
 }
 
 /** Change where a feed is delivered, without touching what it searches for. */
-async function cmdFeedDelivery(args) {
-  const [id] = positional(args)
+async function cmdFeedDelivery(args, words) {
+  const [id] = words
   if (!id || !/^\d+$/.test(id)) die('a feed id is required: hirify feed delivery <id> [--telegram] [--webhook <id>]')
 
   const payload = {}
@@ -837,7 +841,7 @@ function printFeedState(f, lead) {
 /** Delivery endpoints, and creating one. Listing is free; creating needs the plan. */
 async function cmdWebhooks(args) {
   const rest = positional(args)
-  if (rest[0] === 'create') return cmdWebhookCreate(args.slice(1))
+  if (rest[0] === 'create') return cmdWebhookCreate(args, rest.slice(1))
   if (rest[0] && rest[0] !== 'list') die('supported: hirify webhooks, hirify webhooks create "<name>" <url>')
 
   const body = await api('/agent/webhooks')
@@ -853,8 +857,8 @@ async function cmdWebhooks(args) {
   })
 }
 
-async function cmdWebhookCreate(args) {
-  const [name, url] = positional(args)
+async function cmdWebhookCreate(args, words) {
+  const [name, url] = words
   if (!name || !url) die('both a name and an address are required: hirify webhooks create "<name>" <url>')
   if (name.length > 60) die(`the name should be at most 60 characters. Yours is ${name.length}.`)
 
