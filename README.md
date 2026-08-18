@@ -30,6 +30,11 @@ hirify feeds                 # the feeds you saved on the site
 hirify feed <id>             # vacancies from one feed      [--limit N]
 hirify search "senior go"    # search vacancies             [--limit N] [--grade G]
 hirify reveal <slug>         # where to apply: uses 1 reveal
+hirify profiles              # the profiles you can apply with
+hirify apply <slug>          # apply on Hirify   [--profile N] [--cover T]
+hirify feed create "<name>"  # save a search     [--filters JSON] [--webhook N]
+hirify feed delivery <id>    # change how a feed reaches you
+hirify webhooks              # your delivery endpoints
 hirify feedback <kind> "..." # report a bug or ask for a feature  [--body T]
 hirify logout                # sign out on this computer
 ```
@@ -38,7 +43,7 @@ Every command takes `--json` if you want to parse the output instead of reading 
 
 ## Limits
 
-Reading is free and unlimited: `me`, `feeds`, `feed` and `search`.
+Reading is free and unlimited: `me`, `feeds`, `feed`, `search`, `profiles` and `webhooks`.
 
 `reveal` is the only metered call. It spends 1 of your daily limit and returns the company, its
 LinkedIn page and where to send the application. Revealing the same vacancy again is free. The limit
@@ -79,10 +84,29 @@ You can revoke the key from your account at any time.
 Commands explain problems in plain words. When you need the server's own answer to attach to a
 support request, put `HIRIFY_DEBUG=1` in front of the command.
 
-## There is no apply endpoint
+## Applying
 
-Hirify does not send applications for you, and the API has no call for it. The CLI brings back the
-link and the contact; a person sends the application.
+`hirify apply <slug>` sends an application through Hirify, using one of your profiles and an
+optional cover letter. It works for vacancies hosted on Hirify.
+
+Most vacancies on the board come from elsewhere: company career pages, Telegram channels, other
+boards. Those cannot be applied to through us. For them `hirify reveal` brings back the link or the
+contact, and you send the application yourself.
+
+An application cannot be recalled, and nothing follows up on it: the recruiter replies where they
+choose to.
+
+## Saved searches and delivery
+
+```bash
+hirify feed create "Senior Go remote" --filters '{"grade":["senior"]}'
+hirify feed delivery 31 --webhook 4
+hirify webhooks create "my server" https://example.com/hirify
+```
+
+A saved search is the same thing as saving a filter on the site. New matches reach you in Telegram,
+at a webhook of yours, or both. Creating a webhook returns a secret once: store it, because it signs
+every delivery and is not shown again.
 
 ## MCP
 

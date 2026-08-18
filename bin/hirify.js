@@ -23,10 +23,11 @@ const AUTH_FILE = join(CONFIG_DIR, 'auth.json')
 // The key file from 0.1: still read for anyone who has one, never written again.
 const LEGACY_KEY_FILE = join(CONFIG_DIR, 'key')
 
-// Asked for at sign-in, all at once. `agent:feedback` is in here from the start on
-// purpose: an OAuth token carries exactly what the person agreed to, and nothing can add
-// an ability to it later without sending them back through the consent screen.
-const SCOPES = 'agent:read agent:reveal agent:feedback offline_access'
+// Asked for at sign-in, all at once, and every one of them before publication on purpose:
+// an OAuth token carries exactly what the person agreed to, and nothing can add an ability
+// to it later without sending them back through the consent screen. The server narrows the
+// set to what it actually supports, so asking for one it does not know yet costs nothing.
+const SCOPES = 'agent:read agent:reveal agent:apply agent:manage agent:feedback offline_access'
 const CALLBACK_PATH = '/callback'
 // How long we wait for the browser. The authorization code lives the same five minutes.
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000
@@ -57,13 +58,22 @@ const HELP = `hirify - job search for AI agents
   hirify feed <id>             vacancies from one feed      [--limit N]
   hirify search <query>        search vacancies             [--limit N] [--grade G]
   hirify reveal <slug>         WHERE TO APPLY: uses 1 reveal
+  hirify profiles              the profiles you can apply with
+
+  hirify apply <slug>          APPLY on Hirify              [--profile N] [--cover T]
+  hirify feed create <name>    save a search                [--filters JSON] [--webhook N]
+  hirify feed delivery <id>    change how a feed reaches you
+  hirify webhooks              your delivery endpoints
+  hirify webhooks create <name> <url>
+
   hirify feedback <kind>       report a bug or ask for a feature  [--body T] [--vacancy S]
   hirify logout                sign out on this computer
 
   --json                       raw JSON instead of text
 
-Reading is free and unlimited: me, feeds, feed, search.
+Reading is free and unlimited: me, feeds, feed, search, profiles, webhooks.
 Only reveal is metered, and revealing the same vacancy again is free.
+apply sends a real application to a real recruiter. Ask the person first.
 The limit resets at midnight; hirify me shows what is left.
 
 Rules for your agent: npx skills add hirifyme/hirify-cli
@@ -73,14 +83,40 @@ Key: hirify.me/account/api-access`
 // ── helpers ────────────────────────────────────────────────────────────────
 const die = (msg, code = 1) => { console.error(`hirify: ${msg}`); process.exit(code) }
 
+// Options that take a value. Needed by `positional` below: without knowing them we
+// cannot tell `--grade senior` (a filter) from `senior` (a search word).
+const VALUE_FLAGS = new Set(['--limit', '--grade', '--body', '--vacancy', '--profile', '--cover', '--filters', '--webhook'])
+
 const flag = (args, name) => {
   const i = args.indexOf(name)
   return i === -1 ? null : args[i + 1]
+}
+
+/**
+ * The arguments that are not options. Every command reads its slug, id or verb through
+ * this, because reading `args[0]` directly made a flag look like one: `hirify webhooks
+ * --json` was refused as an unknown verb, and `hirify feed --json` asked the server for a
+ * feed literally called "--json".
+ */
+const positional = (args) => {
+  const rest = []
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('--')) {
+      if (VALUE_FLAGS.has(args[i])) i++
+      continue
+    }
+    rest.push(args[i])
+  }
+  return rest
 }
 const out = (data, text) => {
   if (process.argv.includes('--json')) console.log(JSON.stringify(data, null, 2))
   else text()
 }
+
+// Text our own server wrote for the agent to read: application rules, address rejections.
+// Passing it through beats paraphrasing, because paraphrasing drifts from the real rule.
+const serverMessage = (body) => (typeof body?.message === 'string' && body.message ? body.message : null)
 
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const now = () => Math.floor(Date.now() / 1000)
@@ -549,7 +585,17 @@ function printVacancies(list, meta) {
 }
 
 async function cmdFeed(args) {
-  const id = args[0]
+  // `feed` reads one feed, and it also carries the two verbs that change feeds. Feed ids
+  // are numbers, so a word in that position can only be a verb and never an id.
+  // Both halves matter. The verb is found among the positionals, so a flag before it
+  // cannot hide it; and what the sub-command gets is the positionals AFTER the verb, not
+  // the raw argv sliced at index 1. Slicing raw argv broke as soon as a flag stood in
+  // front: `feed --limit 5 delivery 7` used to change the delivery of feed 5.
+  const rest = positional(args)
+  if (rest[0] === 'create') return cmdFeedCreate(args, rest.slice(1))
+  if (rest[0] === 'delivery') return cmdFeedDelivery(args, rest.slice(1))
+
+  const id = rest[0]
   if (!id) die('a feed id is required: hirify feed <id>  (list them with hirify feeds)')
   const limit = flag(args, '--limit')
   const body = await api(`/agent/feeds/${encodeURIComponent(id)}/vacancies${limit ? `?per_page=${limit}` : ''}`)
@@ -557,7 +603,7 @@ async function cmdFeed(args) {
 }
 
 async function cmdSearch(args) {
-  const query = args.filter((a) => !a.startsWith('--') && a !== flag(args, '--limit') && a !== flag(args, '--grade')).join(' ')
+  const query = positional(args).join(' ')
   const p = new URLSearchParams()
   if (query) p.set('search', query)
   const limit = flag(args, '--limit'); if (limit) p.set('per_page', limit)
@@ -575,7 +621,7 @@ function contactLine(c) {
 }
 
 async function cmdReveal(args) {
-  const slug = args[0]
+  const [slug] = positional(args)
   if (!slug) die('a slug is required: hirify reveal <slug>')
   const body = await api(`/agent/vacancies/${encodeURIComponent(slug)}/reveal`, { method: 'POST' })
   const d = body?.data ?? {}
@@ -600,14 +646,13 @@ async function cmdReveal(args) {
  * as a sentence about the title being too short rather than as a field-error object.
  */
 async function cmdFeedback(args) {
-  const type = args[0]
+  const [type, title] = positional(args)
   if (!FEEDBACK_TYPES.includes(type)) {
     die('say what kind of report this is, bug or feature:\n' +
       '        hirify feedback bug "<title>" --body "<what happened>"\n' +
       '        hirify feedback feature "<title>" --body "<what you need>"')
   }
 
-  const title = args[1] && !args[1].startsWith('--') ? args[1] : null
   const text = flag(args, '--body')
   const vacancy = flag(args, '--vacancy')
 
@@ -671,9 +716,171 @@ async function cmdFeedback(args) {
   })
 }
 
+/** The profiles a person can apply with. Free, and the list `apply` picks from. */
+async function cmdProfiles() {
+  const body = await api('/agent/profiles')
+  const list = body?.data ?? []
+  out(body, () => {
+    if (!list.length) {
+      return console.log('You have no profiles yet. Create one on hirify.me, then you can apply.')
+    }
+    for (const p of list) {
+      const state = [p.status, p.is_complete === false ? 'incomplete' : null].filter(Boolean).join(' · ')
+      console.log(`${String(p.profile_id).padEnd(6)} ${p.name || p.title || '(untitled)'}${state ? `  [${state}]` : ''}`)
+    }
+    console.log('\nApply with one: hirify apply <slug> --profile <id>')
+  })
+}
+
+/**
+ * Send a real application, on Hirify, to a real person. This is the one command here
+ * that cannot be undone, so it never guesses: if the account has several profiles and
+ * none was named, the server refuses and we pass that on rather than picking one.
+ */
+async function cmdApply(args) {
+  const [slug] = positional(args)
+  if (!slug) die('a vacancy slug is required: hirify apply <slug> [--profile <id>]')
+
+  const profile = flag(args, '--profile')
+  const cover = flag(args, '--cover')
+
+  if (profile !== null && !/^\d+$/.test(profile)) die('--profile takes a profile id, a number. See hirify profiles.')
+  if (cover !== null && cover.length > 10000) {
+    die(`the cover letter should be at most 10000 characters. Yours is ${cover.length}.`)
+  }
+
+  const res = await api(`/agent/vacancies/${encodeURIComponent(slug)}/apply`, {
+    method: 'POST',
+    payload: { ...(profile ? { profile_id: Number(profile) } : {}), ...(cover ? { cover_letter: cover } : {}) },
+    allow: [201, 404, 422, 502],
+  })
+
+  if (res.status === 404) die('there is no vacancy with that slug.')
+  if (res.status === 502) die('the application could not be sent right now. Please try again in a minute.')
+  if (res.status === 422) {
+    // These come from the same rules the site applies: archived, flagged, hosted
+    // elsewhere, someone else's profile. They are written to be read, so pass them on
+    // instead of flattening every one of them into "something went wrong".
+    die(serverMessage(res.body) || 'the application was not accepted. Please check the vacancy and the profile.')
+  }
+
+  const d = res.body?.data ?? {}
+  out(res.body, () => {
+    console.log(`Applied. Application ${d.application_id ?? ''}, status ${d.status ?? 'sent'}.`.replace('  ', ' '))
+    console.log('Hirify does not chase the answer for you: the recruiter replies where they choose to.')
+  })
+}
+
+/** Save a search, the same thing a person does with the filter form on the site. */
+async function cmdFeedCreate(args, words) {
+  const [name] = words
+  if (!name) die('a name is required: hirify feed create "<name>" [--filters \'<json>\']')
+  if (name.length > 120) die(`the name should be at most 120 characters. Yours is ${name.length}.`)
+
+  // An empty set of criteria is legal and means "send me everything", exactly as it does
+  // on the site. So the field is always sent, and only bad JSON is refused.
+  let filters = {}
+  const raw = flag(args, '--filters')
+  if (raw) {
+    try {
+      filters = JSON.parse(raw)
+    } catch {
+      die('--filters expects JSON, for example --filters \'{"grade":["senior"]}\'')
+    }
+  }
+
+  const payload = { name, filters }
+  if (args.includes('--no-telegram')) payload.notify_telegram = false
+  if (args.includes('--telegram')) payload.notify_telegram = true
+  const webhook = flag(args, '--webhook')
+  if (webhook) {
+    if (!/^\d+$/.test(webhook)) die('--webhook takes an endpoint id, a number. See hirify webhooks.')
+    payload.webhook_endpoint_id = Number(webhook)
+  }
+
+  const res = await api('/agent/feeds', { method: 'POST', payload, allow: [201, 422] })
+  if (res.status === 422) die(serverMessage(res.body) || 'the feed was not created. Please check the criteria.')
+
+  out(res.body, () => printFeedState(res.body?.data ?? {}, 'Saved.'))
+}
+
+/** Change where a feed is delivered, without touching what it searches for. */
+async function cmdFeedDelivery(args, words) {
+  const [id] = words
+  if (!id || !/^\d+$/.test(id)) die('a feed id is required: hirify feed delivery <id> [--telegram] [--webhook <id>]')
+
+  const payload = {}
+  if (args.includes('--telegram')) payload.notify_telegram = true
+  if (args.includes('--no-telegram')) payload.notify_telegram = false
+  if (args.includes('--no-webhook')) payload.webhook_endpoint_id = null
+  const webhook = flag(args, '--webhook')
+  if (webhook) {
+    if (!/^\d+$/.test(webhook)) die('--webhook takes an endpoint id, a number. See hirify webhooks.')
+    payload.webhook_endpoint_id = Number(webhook)
+  }
+  if (!Object.keys(payload).length) {
+    die('say what to change: --telegram, --no-telegram, --webhook <id> or --no-webhook.')
+  }
+
+  const res = await api(`/agent/feeds/${encodeURIComponent(id)}/delivery`, { method: 'PUT', payload, allow: [200, 404, 422] })
+  if (res.status === 404) die('there is no feed with that id. See hirify feeds.')
+  if (res.status === 422) die(serverMessage(res.body) || 'the delivery settings were not accepted.')
+
+  out(res.body, () => printFeedState(res.body?.data ?? {}, 'Updated.'))
+}
+
+function printFeedState(f, lead) {
+  const where = [
+    f.notify_telegram ? 'Telegram' : null,
+    f.webhook_endpoint_id ? `webhook ${f.webhook_endpoint_id}` : null,
+  ].filter(Boolean)
+  console.log(`${lead} Feed ${f.id ?? ''}: ${f.name ?? ''}`.replace('  ', ' ').trimEnd())
+  console.log(where.length ? `Delivered to: ${where.join(' and ')}` : 'Not delivered anywhere yet.')
+}
+
+/** Delivery endpoints, and creating one. Listing is free; creating needs the plan. */
+async function cmdWebhooks(args) {
+  const rest = positional(args)
+  if (rest[0] === 'create') return cmdWebhookCreate(args, rest.slice(1))
+  if (rest[0] && rest[0] !== 'list') die('supported: hirify webhooks, hirify webhooks create "<name>" <url>')
+
+  const body = await api('/agent/webhooks')
+  const list = body?.data ?? []
+  out(body, () => {
+    if (!list.length) {
+      return console.log('You have no delivery endpoints yet. Create one: hirify webhooks create "<name>" <url>')
+    }
+    for (const w of list) {
+      console.log(`${String(w.id).padEnd(6)} ${w.name || '(untitled)'}  ${w.url}${w.state ? `  [${w.state}]` : ''}`)
+    }
+    console.log('\nSend a feed to one: hirify feed delivery <feed id> --webhook <id>')
+  })
+}
+
+async function cmdWebhookCreate(args, words) {
+  const [name, url] = words
+  if (!name || !url) die('both a name and an address are required: hirify webhooks create "<name>" <url>')
+  if (name.length > 60) die(`the name should be at most 60 characters. Yours is ${name.length}.`)
+
+  const res = await api('/agent/webhooks', { method: 'POST', payload: { name, url }, allow: [201, 403, 422] })
+  if (res.status === 403) die(serverMessage(res.body) || 'creating a delivery endpoint is not available on this account.')
+  if (res.status === 422) die(serverMessage(res.body) || 'that address was not accepted.')
+
+  const d = res.body?.data ?? {}
+  out(res.body, () => {
+    console.log(`Created. Endpoint ${d.id ?? ''}: ${d.name ?? ''} ${d.url ?? ''}`.replace(/ +/g, ' ').trimEnd())
+    // The secret is shown once and never again, so it gets its own line and a warning
+    // rather than sitting inside a sentence someone may scroll past.
+    if (d.secret) {
+      console.log(`\nsecret: ${d.secret}`)
+      console.log('Store it now. It is shown once and it signs every delivery.')
+    }
+  })
+}
+
 /** The fallback for CI and servers with no browser. The normal way in is `hirify login`. */
 function cmdAuth(args) {
-  const key = args[0]
+  const [key] = positional(args)
   if (!key) {
     die('to sign in through the browser: `hirify login`.\n' +
       '        With a key (CI, servers): `hirify auth <key>`, from hirify.me/account/api-access')
@@ -694,6 +901,7 @@ const [cmd, ...args] = process.argv.slice(2)
 const routes = {
   login: cmdLogin, logout: cmdLogout, auth: cmdAuth,
   me: cmdMe, feeds: cmdFeeds, feed: cmdFeed, search: cmdSearch, reveal: cmdReveal,
+  profiles: cmdProfiles, apply: cmdApply, webhooks: cmdWebhooks,
   feedback: cmdFeedback,
   skill: cmdSkill,
 }
