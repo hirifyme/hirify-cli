@@ -1,80 +1,102 @@
 ---
 name: hirify
-description: Job search through Hirify - vacancies from the user's saved feeds, search across the board, and the contact to apply to. Use when the user asks to find jobs, look at their feeds, pick roles that fit their profile, or find out where to send an application. Triggers - "find jobs", "what is in my feed", "where do I apply", "hirify".
+description: Job search through Hirify - vacancies from the user's saved feeds, search across the board, the contact to apply to, applying on Hirify, and saved searches with delivery. Use when the user asks to find jobs, look at their feeds, pick roles that fit their profile, apply, or set up alerts. Triggers - "find jobs", "what is in my feed", "where do I apply", "apply to this", "hirify".
 ---
 
 # Hirify job search
 
-You work with the Hirify job board through the `hirify` CLI.
+You work with the Hirify job board through the `hirify` CLI. Full command reference, with every
+option and every answer: `reference.md`, next to this file. Read it when you need the detail.
 
-## The rule that matters: the limit
+## Two rules before anything else
 
-- **Reading is free and unlimited**: `me`, `feeds`, `feed`, `search`. Read as much as you need.
-- **`reveal` spends 1 of the daily limit.** It is the only metered call.
-- Revealing the same vacancy again is **free** (the server deduplicates).
-- **Do not burn the limit.** Shortlist by reading first, then reveal only what genuinely fits the
-  user. Revealing at random spends the whole day.
-- The limit resets at midnight. `hirify me` always shows what is left.
+**Reading is free. Two things are not, and they are not the same kind of not-free.**
 
-## How to work
+- `reveal` spends 1 of a daily limit. It is a budget, and running out costs the user their day.
+- `apply` spends nothing and cannot be taken back. It sends a real application, with the user's
+  name and profile, to a person who will read it.
+
+**Ask the user before every apply, and before anything that changes their account.** Reading needs
+no permission. Sending, saving and configuring do.
+
+## Working order
 
 ```bash
-hirify me                       # plan and remaining limit: start here
+hirify me                       # plan and remaining reveals: start here
 hirify feeds                    # the user's saved feeds, which are their own filters
 hirify feed <id>                # vacancies from a feed: the best source
 hirify search "senior go"       # when no feed fits
-hirify reveal <slug>            # WHERE TO APPLY: spends the limit
+hirify reveal <slug>            # where to apply: spends 1 reveal
+hirify apply <slug>             # apply on Hirify: ask first
 ```
 
-Every command takes `--json`. Use it when you need to parse rather than show.
+1. `hirify me` before revealing anything.
+2. Feeds first, search second. A feed is a filter the user built, so it already says what they want.
+3. Shortlist **from the cards**. They carry no contacts, and that is normal.
+4. `hirify reveal` only for the shortlist.
+5. Apply, and read the next section before you do.
 
-1. `hirify me` to check what is left before revealing anything.
-2. `hirify feeds`, then `hirify feed <id>`. Feeds are filters the user saved themselves, so they
-   already describe what the user wants. That beats a blind search.
-3. No fitting feed: `hirify search "<query>" --limit 20`.
-4. Shortlist **from the cards**. Cards carry no contacts, and that is normal.
-5. `hirify reveal <slug>` only for the shortlist. It returns the company, its LinkedIn page and
-   where to send the application.
+## Applying
 
-## When the user complains or wants something that is missing
+Two different things, and picking the wrong one wastes the user's day:
 
-Hirify can hear it directly from your session. When the user hits something broken, or says they
-wish Hirify did something it does not, offer to send it:
+- **The vacancy is hosted on Hirify** -> `hirify apply <slug>` sends the application through Hirify.
+- **The vacancy came from somewhere else** -> `hirify reveal <slug>` gives the link or contact, and
+  **the user applies themselves**. `apply` will refuse these, and say so.
+
+Rules that are not negotiable:
+
+- **Ask first, every single time, and show what you are about to send.** One application is one
+  irreversible message to a person. Never apply to a list in one go on a single "yes".
+- **Never invent the cover letter.** Draft it from what the user actually said about themselves and
+  show them the draft. If they did not give you anything to work with, ask rather than fill the gap.
+- **Never choose the profile for them** when they have several. `hirify profiles` lists them; the
+  server refuses to guess and so should you. With exactly one profile, it is picked automatically.
+- After a successful apply, say it was sent and stop. Nobody chases the answer: the recruiter
+  replies where they choose to, and Hirify does not track it for the user.
+
+## Saved searches and delivery
+
+These change the user's account, so the same rule applies: propose, get a yes, then do it.
+
+```bash
+hirify feed create "Senior Go remote" --filters '{"grade":["senior"]}'
+hirify feed delivery <id> --telegram | --no-telegram | --webhook <id> | --no-webhook
+hirify webhooks                          # existing delivery endpoints
+hirify webhooks create "<name>" <url>
+```
+
+Creating a delivery endpoint returns a **secret that is shown once**. Give it to the user
+immediately and tell them to store it, because it cannot be shown again and it signs every delivery.
+
+## What not to do
+
+- Do not reveal a vacancy to see what is inside, or just in case.
+- Do not apply without asking. Do not apply in bulk.
+- Do not try to pull the whole database. The limit exists for that, and the account gets banned.
+- **Do not run `hirify login` yourself.** It opens a browser and needs a person at the screen.
+
+## When something goes wrong
+
+- **"you are not signed in yet"**: ask the user to run `hirify login`. On a server with no browser:
+  `hirify auth <key>`, key from hirify.me/account/api-access.
+- **401**: the sign-in expired. `hirify login` again.
+- **403**: the sign-in is missing a permission, or the plan does not include agent access. If the
+  user signed in before a permission existed, they have to sign in again to get it.
+- **429**: the daily limit is used up until midnight. Reading still works.
+- **A refusal on apply** is usually the vacancy, not the user: archived, flagged, or hosted
+  elsewhere. Read what it says and tell the user plainly.
+
+## Telling Hirify something is broken
+
+When the user hits something broken or wishes a feature existed, offer to send it:
 
 ```bash
 hirify feedback bug "Reveal answers 500 on archived vacancies" --body "<what happened>"
 hirify feedback feature "Filter by salary currency" --body "<what the user needs>"
 ```
 
-- Add `--vacancy <slug>` when the report is about one vacancy.
-- This is free. It does not touch the reveal limit.
-- **Ask before sending, and send what the user agreed to.** This goes to the Hirify team under the
-  user's name, so it is their words to approve, not yours to compose on their behalf.
-- Write the body as the user described it, with the concrete detail: what they did, what happened,
-  what they expected. "Search is bad" helps nobody.
-- The title needs 5 to 140 characters, the body 10 to 5000.
-- One report per problem. Do not resend the same thing, and do not turn a single complaint into a
-  stream of tickets: there is a limit of a few per minute and it exists for that reason.
-- The answer gives a ticket number, or says there is no number yet. **Report that it was passed on,
-  and stop there.** There is no page the user can open for it, nothing writes back to them, and no
-  reply, fix or date is promised by anyone. Do not invent one.
-
-## What not to do
-
-- **Do not apply on the user's behalf.** There is no API for it and there will not be one. Your work
-  ends when you bring back the link and the contact. The person sends the application.
-- Do not reveal a vacancy to see what is inside, or just in case.
-- Do not try to pull the whole database. The limit exists for exactly that, and the account gets
-  banned.
-- **Do not run `hirify login` yourself.** It opens a browser and needs a person at the screen. Ask
-  the user to run it and wait for them.
-
-## When something goes wrong
-
-- **"you are not signed in yet"**: ask the user to run `hirify login`. Their browser opens, they
-  confirm, and the terminal continues on its own. On a server with no browser: `hirify auth <key>`,
-  key from hirify.me/account/api-access.
-- **401, sign-in no longer valid**: same answer, `hirify login` again.
-- **403**: the sign-in is missing a permission, or the plan does not include agent access. Point the
-  user at hirify.me/account/api-access.
-- **429**: the daily limit is used up until midnight. Reading still works.
+Free, and it does not touch the reveal limit. Ask before sending, send the user's words rather than
+your own, and add `--vacancy <slug>` when it is about one vacancy. The answer gives a ticket number
+or says there is no number yet. **Report that it was passed on, and stop there**: there is no page
+to open, nothing writes back, and nobody promised a reply, a fix or a date.
