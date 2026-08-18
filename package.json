@@ -1,0 +1,38 @@
+{
+  "name": "hirify",
+  "version": "0.4.0",
+  "description": "Hirify CLI for AI agents: browser sign-in, job feeds, search, contacts to apply to, and applying on Hirify.",
+  "bin": {
+    "hirify": "bin/hirify.js"
+  },
+  "scripts": {
+    "prepublishOnly": "node scripts/prepublish-check.mjs"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin",
+    "skills",
+    "README.md"
+  ],
+  "keywords": [
+    "hirify",
+    "jobs",
+    "ai-agent",
+    "cli",
+    "job-search",
+    "mcp",
+    "skills"
+  ],
+  "homepage": "https://hirify.me",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hirifyme/hirify-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hirifyme/hirify-cli/issues"
+  },
+  "license": "MIT"
+}
