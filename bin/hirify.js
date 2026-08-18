@@ -83,9 +83,31 @@ Key: hirify.me/account/api-access`
 // ── helpers ────────────────────────────────────────────────────────────────
 const die = (msg, code = 1) => { console.error(`hirify: ${msg}`); process.exit(code) }
 
+// Options that take a value. Needed by `positional` below: without knowing them we
+// cannot tell `--grade senior` (a filter) from `senior` (a search word).
+const VALUE_FLAGS = new Set(['--limit', '--grade', '--body', '--vacancy', '--profile', '--cover', '--filters', '--webhook'])
+
 const flag = (args, name) => {
   const i = args.indexOf(name)
   return i === -1 ? null : args[i + 1]
+}
+
+/**
+ * The arguments that are not options. Every command reads its slug, id or verb through
+ * this, because reading `args[0]` directly made a flag look like one: `hirify webhooks
+ * --json` was refused as an unknown verb, and `hirify feed --json` asked the server for a
+ * feed literally called "--json".
+ */
+const positional = (args) => {
+  const rest = []
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith('--')) {
+      if (VALUE_FLAGS.has(args[i])) i++
+      continue
+    }
+    rest.push(args[i])
+  }
+  return rest
 }
 const out = (data, text) => {
   if (process.argv.includes('--json')) console.log(JSON.stringify(data, null, 2))
@@ -565,10 +587,11 @@ function printVacancies(list, meta) {
 async function cmdFeed(args) {
   // `feed` reads one feed, and it also carries the two verbs that change feeds. Feed ids
   // are numbers, so a word in that position can only be a verb and never an id.
-  if (args[0] === 'create') return cmdFeedCreate(args.slice(1))
-  if (args[0] === 'delivery') return cmdFeedDelivery(args.slice(1))
+  const rest = positional(args)
+  if (rest[0] === 'create') return cmdFeedCreate(args.slice(1))
+  if (rest[0] === 'delivery') return cmdFeedDelivery(args.slice(1))
 
-  const id = args[0]
+  const id = rest[0]
   if (!id) die('a feed id is required: hirify feed <id>  (list them with hirify feeds)')
   const limit = flag(args, '--limit')
   const body = await api(`/agent/feeds/${encodeURIComponent(id)}/vacancies${limit ? `?per_page=${limit}` : ''}`)
@@ -576,7 +599,7 @@ async function cmdFeed(args) {
 }
 
 async function cmdSearch(args) {
-  const query = args.filter((a) => !a.startsWith('--') && a !== flag(args, '--limit') && a !== flag(args, '--grade')).join(' ')
+  const query = positional(args).join(' ')
   const p = new URLSearchParams()
   if (query) p.set('search', query)
   const limit = flag(args, '--limit'); if (limit) p.set('per_page', limit)
@@ -594,7 +617,7 @@ function contactLine(c) {
 }
 
 async function cmdReveal(args) {
-  const slug = args[0]
+  const [slug] = positional(args)
   if (!slug) die('a slug is required: hirify reveal <slug>')
   const body = await api(`/agent/vacancies/${encodeURIComponent(slug)}/reveal`, { method: 'POST' })
   const d = body?.data ?? {}
@@ -619,14 +642,13 @@ async function cmdReveal(args) {
  * as a sentence about the title being too short rather than as a field-error object.
  */
 async function cmdFeedback(args) {
-  const type = args[0]
+  const [type, title] = positional(args)
   if (!FEEDBACK_TYPES.includes(type)) {
     die('say what kind of report this is, bug or feature:\n' +
       '        hirify feedback bug "<title>" --body "<what happened>"\n' +
       '        hirify feedback feature "<title>" --body "<what you need>"')
   }
 
-  const title = args[1] && !args[1].startsWith('--') ? args[1] : null
   const text = flag(args, '--body')
   const vacancy = flag(args, '--vacancy')
 
@@ -712,8 +734,8 @@ async function cmdProfiles() {
  * none was named, the server refuses and we pass that on rather than picking one.
  */
 async function cmdApply(args) {
-  const slug = args[0]
-  if (!slug || slug.startsWith('--')) die('a vacancy slug is required: hirify apply <slug> [--profile <id>]')
+  const [slug] = positional(args)
+  if (!slug) die('a vacancy slug is required: hirify apply <slug> [--profile <id>]')
 
   const profile = flag(args, '--profile')
   const cover = flag(args, '--cover')
@@ -747,7 +769,7 @@ async function cmdApply(args) {
 
 /** Save a search, the same thing a person does with the filter form on the site. */
 async function cmdFeedCreate(args) {
-  const name = args[0] && !args[0].startsWith('--') ? args[0] : null
+  const [name] = positional(args)
   if (!name) die('a name is required: hirify feed create "<name>" [--filters \'<json>\']')
   if (name.length > 120) die(`the name should be at most 120 characters. Yours is ${name.length}.`)
 
@@ -780,7 +802,7 @@ async function cmdFeedCreate(args) {
 
 /** Change where a feed is delivered, without touching what it searches for. */
 async function cmdFeedDelivery(args) {
-  const id = args[0]
+  const [id] = positional(args)
   if (!id || !/^\d+$/.test(id)) die('a feed id is required: hirify feed delivery <id> [--telegram] [--webhook <id>]')
 
   const payload = {}
@@ -814,8 +836,9 @@ function printFeedState(f, lead) {
 
 /** Delivery endpoints, and creating one. Listing is free; creating needs the plan. */
 async function cmdWebhooks(args) {
-  if (args[0] === 'create') return cmdWebhookCreate(args.slice(1))
-  if (args[0] && args[0] !== 'list') die('supported: hirify webhooks, hirify webhooks create "<name>" <url>')
+  const rest = positional(args)
+  if (rest[0] === 'create') return cmdWebhookCreate(args.slice(1))
+  if (rest[0] && rest[0] !== 'list') die('supported: hirify webhooks, hirify webhooks create "<name>" <url>')
 
   const body = await api('/agent/webhooks')
   const list = body?.data ?? []
@@ -831,8 +854,7 @@ async function cmdWebhooks(args) {
 }
 
 async function cmdWebhookCreate(args) {
-  const name = args[0] && !args[0].startsWith('--') ? args[0] : null
-  const url = args[1] && !args[1].startsWith('--') ? args[1] : null
+  const [name, url] = positional(args)
   if (!name || !url) die('both a name and an address are required: hirify webhooks create "<name>" <url>')
   if (name.length > 60) die(`the name should be at most 60 characters. Yours is ${name.length}.`)
 
@@ -854,7 +876,7 @@ async function cmdWebhookCreate(args) {
 
 /** The fallback for CI and servers with no browser. The normal way in is `hirify login`. */
 function cmdAuth(args) {
-  const key = args[0]
+  const [key] = positional(args)
   if (!key) {
     die('to sign in through the browser: `hirify login`.\n' +
       '        With a key (CI, servers): `hirify auth <key>`, from hirify.me/account/api-access')
