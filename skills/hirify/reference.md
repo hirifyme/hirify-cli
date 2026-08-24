@@ -13,11 +13,17 @@ when you need to report a problem; the normal output never contains raw payloads
 
 | Command | Cost | Reversible |
 |---|---|---|
-| `me`, `feeds`, `feed`, `search`, `profiles`, `webhooks` | free, unlimited | reading only |
-| `reveal` | 1 of the daily limit, repeats on the same vacancy are free | reading only |
+| `me`, `feeds`, `feed`, `search`, `profiles`, `webhooks` | free: they spend no reveals | reading only |
+| `reveal` | 1 reveal, repeats on the same vacancy are free | reading only |
 | `apply` | free | **no**: a real application reaches a real person |
 | `feed create`, `feed delivery`, `webhooks create` | free | changes the user's account |
-| `feedback` | free, a few per minute | a ticket is filed |
+| `feedback` | free | a ticket is filed |
+
+Free is not unlimited. Every command is rate-limited per minute, `feed` and `search` more tightly
+than the rest, and `feedback` also per day. A burst answers `429`; wait the seconds it names and
+carry on. The current numbers come from the server: `hirify me --json`, block `limits`.
+
+Reveals are the only budget that runs out. When it does, reading still works.
 
 ## Signing in
 
@@ -39,8 +45,8 @@ hirify feed <id> [--limit N]
 hirify search "<query>" [--limit N] [--grade G]
 ```
 
-`me` reports the plan, reveals used and left today, and usage over 7 and 30 days. Check it before
-spending reveals.
+`me` reports the plan, the reveals left, and usage over 7 and 30 days. Check it before spending
+reveals. Reveals come as one number, not a fraction.
 
 `feeds` lists saved searches as `<id> <name>`, with `(off)` for an inactive one. `feed <id>` returns
 that feed's vacancies; `search` takes a free-text query.
@@ -62,12 +68,12 @@ field is broken.
 hirify reveal <slug>
 ```
 
-Spends 1 of the daily limit and returns the company, its LinkedIn page when known, and one or more
+Spends 1 reveal and returns the company, its LinkedIn page when known, and one or more
 contacts: an address, a form URL, or a link. Revealing the same vacancy again returns the same thing
 and spends nothing, so a repeat is safe. The output states whether a reveal was used and how many
 are left.
 
-Shortlist by reading first. Reveals spent at random are gone for the day.
+Shortlist by reading first. A reveal spent at random is spent.
 
 ## Apply: only on Hirify
 
@@ -134,6 +140,7 @@ report not being accepted.
 | `your sign-in is no longer valid` | the session expired past renewal | ask the user to run `hirify login` |
 | `the key was not accepted (401)` | a manual key was revoked or truncated | new key from the account page |
 | `no access (403)` | missing permission, or the plan does not cover agent access | sign in again, or check the plan |
-| `today's reveal limit is used up (429)` | budget spent | reading still works; it resets at midnight |
+| `you have no reveals left right now` | the reveal budget is spent | reading still works; `hirify me` shows what is left |
+| `too many requests in a short time` | asking faster than the API allows | wait the seconds it names, then carry on |
 | `something went wrong on our side` | our fault, not the request | retry in a minute |
 | `the network seems to be unavailable` | no connection | retry |

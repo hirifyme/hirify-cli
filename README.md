@@ -25,7 +25,7 @@ and OpenCode. See [skills.sh](https://skills.sh).
 ## Commands
 
 ```bash
-hirify me                    # your plan and today's remaining reveals
+hirify me                    # your plan and the reveals you have left
 hirify feeds                 # the feeds you saved on the site
 hirify feed <id>             # vacancies from one feed      [--limit N]
 hirify search "senior go"    # search vacancies             [--limit N] [--grade G]
@@ -43,13 +43,14 @@ Every command takes `--json` if you want to parse the output instead of reading 
 
 ## Limits
 
-Reading is free and unlimited: `me`, `feeds`, `feed`, `search`, `profiles` and `webhooks`.
+Reading is free: `me`, `feeds`, `feed`, `search`, `profiles` and `webhooks`. Bursts are
+rate-limited, so a command in a tight loop gets `429` and asks you to slow down.
 
-`reveal` is the only metered call. It spends 1 of your daily limit and returns the company, its
-LinkedIn page and where to send the application. Revealing the same vacancy again is free. The limit
-resets at midnight, and `hirify me` always shows what is left.
+`reveal` is the only metered call. It spends 1 reveal and returns the company, its LinkedIn page and
+where to send the application. Revealing the same vacancy again is free, and `hirify me` always shows
+how many you have left.
 
-The limit is sized for a person applying to jobs, so read first and reveal only what fits.
+Reveals are sized for a person applying to jobs, so read first and reveal only what fits.
 
 ## Telling us something is broken
 
@@ -61,7 +62,7 @@ hirify feedback feature "Filter by salary currency" --body "What you need and wh
 It reaches the Hirify team under your name and answers with a ticket number, or says there is no
 number yet. There is no page to open and nothing writes back, so keep the number if you want to
 refer to it later. Add `--vacancy <slug>` when it is about one vacancy. This is free and does not
-touch your reveal limit.
+touch your reveals.
 
 ## Signing in
 

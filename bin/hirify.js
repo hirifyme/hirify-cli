@@ -4,8 +4,8 @@
 // A thin client over `api.hirify.me/api/agent/*`, the same API the MCP server serves.
 // No dependencies: Node 18+ (built-in fetch), runs through `npx hirify`.
 //
-// Metering, same as on the server: reading vacancies is free and unlimited, revealing a
-// contact spends 1 of the daily limit, and revealing the same vacancy again is free.
+// Metering, same as on the server: reading vacancies is free, revealing a contact spends
+// 1 of the account's reveal allowance, and revealing the same vacancy again is free.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -53,7 +53,7 @@ const USER_AGENT = `hirify-cli/${VERSION}`
 const HELP = `hirify - job search for AI agents
 
   hirify login                 sign in through your browser
-  hirify me                    your plan and today's remaining reveals
+  hirify me                    your plan and the reveals you have left
   hirify feeds                 the feeds you saved on the site
   hirify feed <id>             vacancies from one feed      [--limit N]
   hirify search <query>        search vacancies             [--limit N] [--grade G]
@@ -71,10 +71,10 @@ const HELP = `hirify - job search for AI agents
 
   --json                       raw JSON instead of text
 
-Reading is free and unlimited: me, feeds, feed, search, profiles, webhooks.
+Reading is free: me, feeds, feed, search, profiles, webhooks.
 Only reveal is metered, and revealing the same vacancy again is free.
 apply sends a real application to a recruiter. Ask the person first.
-The limit resets at midnight; hirify me shows what is left.
+hirify me shows how many reveals are left.
 
 Rules for your agent: npx skills add hirifyme/hirify-cli
 No browser (CI, servers): hirify auth <key>, or the HIRIFY_KEY variable.
@@ -109,6 +109,14 @@ const positional = (args) => {
   }
   return rest
 }
+
+/**
+ * A number as the server sent it, or `null` when the field is not there. Every printed
+ * figure goes through this: a field the API stopped sending used to reach the screen as
+ * the word `undefined`, which reads like a fact about the account and is not one.
+ */
+const count = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
+
 const out = (data, text) => {
   if (process.argv.includes('--json')) console.log(JSON.stringify(data, null, 2))
   else text()
@@ -222,7 +230,16 @@ async function api(path, { method = 'GET', payload = null, allow = [] } = {}) {
   }
   if (res.status === 403) die('no access (403). This needs an active paid plan, or the sign-in is missing a permission.')
   if (res.status === 404) die('not found (404).')
-  if (res.status === 429) die("today's reveal limit is used up (429). It resets at midnight.")
+  if (res.status === 429) {
+    // Two different walls answer 429: the reveal allowance is spent, or the requests came
+    // too fast. Only the first carries a quota block. Naming the wrong one leaves someone
+    // waiting out a limit they still have, or spending reveals they no longer do.
+    const spent = await res.json().catch(() => null)
+    const wait = Number(res.headers.get('retry-after'))
+    if (spent?.quota) die('you have no reveals left right now. Reading still works.')
+    die('too many requests in a short time.' +
+      (Number.isFinite(wait) && wait > 0 ? ` Please try again in ${wait} seconds.` : ' Please try again in a minute.'))
+  }
   const body = await res.json().catch(() => null)
   if (!res.ok) {
     // Everything expected is handled above. What lands here is not, and it used to print
@@ -538,12 +555,18 @@ function cmdLogout() {
 async function cmdMe() {
   const body = await api('/agent/me')
   const d = body?.data ?? {}
-  const q = d?.quota?.reveal
-  const u = d?.usage?.reveal
+  const left = count(d?.quota?.reveal?.remaining)
+  const u = d?.usage?.reveal ?? {}
+  // Whatever the server sent, and nothing else: a period it left out is simply not shown.
+  const spent = [[u.today, 'today'], [u.last_7d, 'in 7d'], [u.last_30d, 'in 30d']]
+    .filter(([n]) => count(n) !== null)
+    .map(([n, when]) => `${n} ${when}`)
   out(body, () => {
     console.log(`plan:    ${d?.plan ?? '-'}`)
-    if (q) console.log(`reveals: ${q.used} of ${q.limit} used today (${q.remaining} left)`)
-    if (u) console.log(`usage:   ${u.today} today · ${u.last_7d} in 7d · ${u.last_30d} in 30d`)
+    // How many are left, and no denominator. Reveals are not a fraction of a number the
+    // person has, so `N of M` would be inventing the M.
+    console.log(`reveals: ${left === null ? '-' : `${left} left`}`)
+    if (spent.length) console.log(`usage:   ${spent.join(' · ')}`)
   })
 }
 
@@ -554,7 +577,7 @@ async function cmdFeeds() {
     if (!list.length) return console.log('You have no feeds yet. Save a filter on hirify.me and it becomes a feed.')
     for (const f of list) {
       const off = f.is_active === false ? '  (off)' : ''
-      console.log(`${String(f.id).padEnd(6)} ${f.name || '(untitled)'}${off}`)
+      console.log(`${String(f.id ?? '-').padEnd(6)} ${f.name || '(untitled)'}${off}`)
     }
     console.log(`\nVacancies from a feed: hirify feed <id>`)
   })
@@ -612,12 +635,16 @@ async function cmdSearch(args) {
   out(body, () => printVacancies(body?.data ?? [], body?.meta))
 }
 
-/** One contact line: the address as it is, with the type only when it adds something. */
+/**
+ * One contact line: the address as it is, with the type only when it adds something.
+ * An unknown shape is still printed as it came, because the contact is the whole point
+ * of the command; an empty slot returns nothing, so no line is printed for it.
+ */
 function contactLine(c) {
   if (typeof c === 'string') return c
   const value = c?.value ?? c?.url ?? c?.email ?? null
-  if (!value) return JSON.stringify(c)
-  return c?.type && c.type !== 'url' ? `${value}  (${c.type})` : value
+  if (value) return c?.type && c.type !== 'url' ? `${value}  (${c.type})` : value
+  return c === null || c === undefined ? null : JSON.stringify(c)
 }
 
 async function cmdReveal(args) {
@@ -630,12 +657,15 @@ async function cmdReveal(args) {
     if (d.linkedin) console.log(`linkedin: ${d.linkedin}`)
     // A contact arrives as {type, value, short_code}. People and agents want the address,
     // not its JSON: nobody unpacks a raw object by hand while reading a terminal.
-    for (const c of d.contacts ?? []) console.log(`contact:  ${contactLine(c)}`)
+    for (const c of d.contacts ?? []) {
+      const line = contactLine(c)
+      if (line) console.log(`contact:  ${line}`)
+    }
     console.log(d.charged === false
       ? '\n(no reveal used: you have revealed this vacancy before)'
       : '\n(1 reveal used)')
-    const q = d.quota
-    if (q) console.log(`${q.remaining} of ${q.limit} left today`)
+    const left = count(d.quota?.remaining)
+    if (left !== null) console.log(`${left} ${left === 1 ? 'reveal' : 'reveals'} left`)
   })
 }
 
@@ -726,7 +756,7 @@ async function cmdProfiles() {
     }
     for (const p of list) {
       const state = [p.status, p.is_complete === false ? 'incomplete' : null].filter(Boolean).join(' · ')
-      console.log(`${String(p.profile_id).padEnd(6)} ${p.name || p.title || '(untitled)'}${state ? `  [${state}]` : ''}`)
+      console.log(`${String(p.profile_id ?? '-').padEnd(6)} ${p.name || p.title || '(untitled)'}${state ? `  [${state}]` : ''}`)
     }
     console.log('\nApply with one: hirify apply <slug> --profile <id>')
   })
@@ -766,7 +796,9 @@ async function cmdApply(args) {
 
   const d = res.body?.data ?? {}
   out(res.body, () => {
-    console.log(`Applied. Application ${d.application_id ?? ''}, status ${d.status ?? 'sent'}.`.replace('  ', ' '))
+    console.log(d.application_id
+      ? `Applied. Application ${d.application_id}, status ${d.status ?? 'sent'}.`
+      : `Applied. Status ${d.status ?? 'sent'}.`)
     console.log('Hirify does not follow up for you: the recruiter replies where they choose to.')
   })
 }
@@ -834,7 +866,7 @@ function printFeedState(f, lead) {
     f.notify_telegram ? 'Telegram' : null,
     f.webhook_endpoint_id ? `webhook ${f.webhook_endpoint_id}` : null,
   ].filter(Boolean)
-  console.log(`${lead} Feed ${f.id ?? ''}: ${f.name ?? ''}`.replace('  ', ' ').trimEnd())
+  console.log(`${lead} Feed ${f.id ?? '-'}: ${f.name || '(untitled)'}`)
   console.log(where.length ? `Delivered to: ${where.join(' and ')}` : 'Not delivered anywhere yet.')
 }
 
@@ -851,7 +883,7 @@ async function cmdWebhooks(args) {
       return console.log('You have no delivery endpoints yet. Create one: hirify webhooks create "<name>" <url>')
     }
     for (const w of list) {
-      console.log(`${String(w.id).padEnd(6)} ${w.name || '(untitled)'}  ${w.url}${w.state ? `  [${w.state}]` : ''}`)
+      console.log(`${String(w.id ?? '-').padEnd(6)} ${w.name || '(untitled)'}  ${w.url ?? '-'}${w.state ? `  [${w.state}]` : ''}`)
     }
     console.log('\nSend a feed to one: hirify feed delivery <feed id> --webhook <id>')
   })
@@ -868,7 +900,7 @@ async function cmdWebhookCreate(args, words) {
 
   const d = res.body?.data ?? {}
   out(res.body, () => {
-    console.log(`Created. Endpoint ${d.id ?? ''}: ${d.name ?? ''} ${d.url ?? ''}`.replace(/ +/g, ' ').trimEnd())
+    console.log(`Created. Endpoint ${d.id ?? '-'}: ${d.name || '(untitled)'} ${d.url ?? ''}`.trimEnd())
     // The secret is shown once and never again, so it gets its own line and a warning
     // rather than sitting inside a sentence someone may scroll past.
     if (d.secret) {

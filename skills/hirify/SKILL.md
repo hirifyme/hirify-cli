@@ -12,7 +12,7 @@ option and every answer: `reference.md`, next to this file. Read it when you nee
 
 **Reading is free. Two commands are not, and they cost different things.**
 
-- `reveal` spends 1 of a daily limit. When it runs out, the user waits until midnight.
+- `reveal` spends 1 reveal. When they run out, reading still works: `hirify me` shows what is left.
 - `apply` spends nothing and cannot be taken back. It sends a real application, with the user's
   name and profile, to a person who will read it.
 
@@ -83,7 +83,8 @@ immediately and tell them to store it, because it cannot be shown again and it s
 - **401**: the sign-in expired. `hirify login` again.
 - **403**: the sign-in is missing a permission, or the plan does not include agent access. If the
   user signed in before a permission existed, they have to sign in again to get it.
-- **429**: the daily limit is used up until midnight. Reading still works.
+- **429**: either the reveals are spent, or the commands came too fast. The message says which,
+  and reading works in both cases.
 - **A refusal on apply** is usually the vacancy, not the user: archived, flagged, or hosted
   elsewhere. Read what it says and tell the user plainly.
 
