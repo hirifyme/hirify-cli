@@ -49,8 +49,7 @@ Reading is free and unlimited: `me`, `feeds`, `feed`, `search`, `profiles` and `
 LinkedIn page and where to send the application. Revealing the same vacancy again is free. The limit
 resets at midnight, and `hirify me` always shows what is left.
 
-Pick with reading first and reveal only what fits. The limit is there for people applying to jobs,
-not for copying the database.
+The limit is sized for a person applying to jobs, so read first and reveal only what fits.
 
 ## Telling us something is broken
 
@@ -59,10 +58,10 @@ hirify feedback bug "Reveal answers 500 on archived vacancies" --body "What happ
 hirify feedback feature "Filter by salary currency" --body "What you need and why."
 ```
 
-It goes to the Hirify team under your name and comes back with a ticket number, or with a note that
-there is no number yet. A report has no page you can open and nothing writes back to you, so keep
-the number if you want to refer to it later. Add `--vacancy <slug>` when it is about one vacancy.
-This is free and does not touch your reveal limit.
+It reaches the Hirify team under your name and answers with a ticket number, or says there is no
+number yet. There is no page to open and nothing writes back, so keep the number if you want to
+refer to it later. Add `--vacancy <slug>` when it is about one vacancy. This is free and does not
+touch your reveal limit.
 
 ## Signing in
 
@@ -81,8 +80,8 @@ You can revoke the key from your account at any time.
 
 ## Troubleshooting
 
-Commands explain problems in plain words. When you need the server's own answer to attach to a
-support request, put `HIRIFY_DEBUG=1` in front of the command.
+When you need the server's own answer to attach to a report, put `HIRIFY_DEBUG=1` in front of the
+command.
 
 ## Applying
 
@@ -111,5 +110,4 @@ every delivery and is not shown again.
 ## MCP
 
 The same API is available as an MCP server at `https://api.hirify.me/api/mcp`, with the same
-account. Use whichever your agent supports. The CLI is usually cheaper in tokens for agents running
-in a terminal.
+account. Use whichever your agent supports.

@@ -57,10 +57,10 @@ const HELP = `hirify - job search for AI agents
   hirify feeds                 the feeds you saved on the site
   hirify feed <id>             vacancies from one feed      [--limit N]
   hirify search <query>        search vacancies             [--limit N] [--grade G]
-  hirify reveal <slug>         WHERE TO APPLY: uses 1 reveal
+  hirify reveal <slug>         where to apply: uses 1 reveal
   hirify profiles              the profiles you can apply with
 
-  hirify apply <slug>          APPLY on Hirify              [--profile N] [--cover T]
+  hirify apply <slug>          apply on Hirify              [--profile N] [--cover T]
   hirify feed create <name>    save a search                [--filters JSON] [--webhook N]
   hirify feed delivery <id>    change how a feed reaches you
   hirify webhooks              your delivery endpoints
@@ -73,7 +73,7 @@ const HELP = `hirify - job search for AI agents
 
 Reading is free and unlimited: me, feeds, feed, search, profiles, webhooks.
 Only reveal is metered, and revealing the same vacancy again is free.
-apply sends a real application to a real recruiter. Ask the person first.
+apply sends a real application to a recruiter. Ask the person first.
 The limit resets at midnight; hirify me shows what is left.
 
 Rules for your agent: npx skills add hirifyme/hirify-cli
@@ -439,7 +439,7 @@ async function cmdLogin(args) {
     // the only place a person learns it was about access rather than about the command.
     die('we did not get a confirmation in the browser. Please run `hirify login` again.' +
       '\n        If the browser said API access is not enabled, that is about your plan,' +
-      '\n        not about the command: hirify.me/account/api-access')
+      '\n        not the command: hirify.me/account/api-access')
   }
   if (answer.error === 'access_denied') {
     // The server sends its description for a program to read, in ASCII, as the spec
@@ -456,7 +456,7 @@ async function cmdLogin(args) {
     die('the sign-in did not finish. Please run `hirify login` again.')
   }
   if (answer.state !== state) {
-    die('the browser answered a different sign-in. Please run `hirify login` again.')
+    die('that answer came from a different sign-in. Please run `hirify login` again.')
   }
   if (!answer.code) {
     die('the browser came back without a confirmation code. Please run `hirify login` again.')
@@ -675,13 +675,13 @@ async function cmdFeedback(args) {
 
   if (res.status === 429) {
     const wait = Number(res.retryAfter)
-    die('that is a lot of reports in a short time.' +
+    die('too many reports in a short time.' +
       (Number.isFinite(wait) && wait > 0 ? ` Please try again in ${wait} seconds.` : ' Please try again a bit later.'))
   }
   if (res.status === 502) {
     // Not queued and not retried on our side, because a retry would not fix it. Say that
     // the fault is ours, so nobody rewrites a perfectly good report thinking it was them.
-    die('we could not pass your report on. That is a fault on our side, not in what you wrote.' +
+    die('we could not pass your report on. That is on our side, not in what you wrote.' +
       '\n        Please try again a bit later.')
   }
   if (res.status === 404 || res.status === 503) {
@@ -710,7 +710,7 @@ async function cmdFeedback(args) {
     } else if (ticket) {
       console.log(`Thank you. Your report was passed on as number ${ticket}.`)
     } else {
-      console.log('Thank you. Your report is with us and on its way to the team, without a number yet.')
+      console.log('Thank you. Your report was passed on. There is no number for it yet.')
     }
     if (d.reference) console.log(`reference: ${d.reference}`)
   })
@@ -767,7 +767,7 @@ async function cmdApply(args) {
   const d = res.body?.data ?? {}
   out(res.body, () => {
     console.log(`Applied. Application ${d.application_id ?? ''}, status ${d.status ?? 'sent'}.`.replace('  ', ' '))
-    console.log('Hirify does not chase the answer for you: the recruiter replies where they choose to.')
+    console.log('Hirify does not follow up for you: the recruiter replies where they choose to.')
   })
 }
 
@@ -842,7 +842,7 @@ function printFeedState(f, lead) {
 async function cmdWebhooks(args) {
   const rest = positional(args)
   if (rest[0] === 'create') return cmdWebhookCreate(args, rest.slice(1))
-  if (rest[0] && rest[0] !== 'list') die('supported: hirify webhooks, hirify webhooks create "<name>" <url>')
+  if (rest[0] && rest[0] !== 'list') die('hirify webhooks lists them. To add one: hirify webhooks create "<name>" <url>')
 
   const body = await api('/agent/webhooks')
   const list = body?.data ?? []

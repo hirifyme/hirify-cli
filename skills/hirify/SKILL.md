@@ -10,9 +10,9 @@ option and every answer: `reference.md`, next to this file. Read it when you nee
 
 ## Two rules before anything else
 
-**Reading is free. Two things are not, and they are not the same kind of not-free.**
+**Reading is free. Two commands are not, and they cost different things.**
 
-- `reveal` spends 1 of a daily limit. It is a budget, and running out costs the user their day.
+- `reveal` spends 1 of a daily limit. When it runs out, the user waits until midnight.
 - `apply` spends nothing and cannot be taken back. It sends a real application, with the user's
   name and profile, to a person who will read it.
 
@@ -38,22 +38,22 @@ hirify apply <slug>             # apply on Hirify: ask first
 
 ## Applying
 
-Two different things, and picking the wrong one wastes the user's day:
+Two cases, and they take different commands:
 
 - **The vacancy is hosted on Hirify** -> `hirify apply <slug>` sends the application through Hirify.
 - **The vacancy came from somewhere else** -> `hirify reveal <slug>` gives the link or contact, and
   **the user applies themselves**. `apply` will refuse these, and say so.
 
-Rules that are not negotiable:
+Rules:
 
-- **Ask first, every single time, and show what you are about to send.** One application is one
-  irreversible message to a person. Never apply to a list in one go on a single "yes".
+- **Ask first, every time, and show what you are about to send.** An application cannot be taken
+  back. Never apply to a list on a single "yes".
 - **Never invent the cover letter.** Draft it from what the user actually said about themselves and
   show them the draft. If they did not give you anything to work with, ask rather than fill the gap.
-- **Never choose the profile for them** when they have several. `hirify profiles` lists them; the
-  server refuses to guess and so should you. With exactly one profile, it is picked automatically.
-- After a successful apply, say it was sent and stop. Nobody chases the answer: the recruiter
-  replies where they choose to, and Hirify does not track it for the user.
+- **Never choose the profile for them** when they have several. `hirify profiles` lists them. With
+  exactly one profile, it is picked automatically.
+- After a successful apply, say it was sent and stop. Nobody follows up: the recruiter replies where
+  they choose to, and Hirify does not track it.
 
 ## Saved searches and delivery
 
@@ -73,7 +73,7 @@ immediately and tell them to store it, because it cannot be shown again and it s
 
 - Do not reveal a vacancy to see what is inside, or just in case.
 - Do not apply without asking. Do not apply in bulk.
-- Do not try to pull the whole database. The limit exists for that, and the account gets banned.
+- Do not try to pull the whole board. That is what the limit is for.
 - **Do not run `hirify login` yourself.** It opens a browser and needs a person at the screen.
 
 ## When something goes wrong
@@ -99,4 +99,4 @@ hirify feedback feature "Filter by salary currency" --body "<what the user needs
 Free, and it does not touch the reveal limit. Ask before sending, send the user's words rather than
 your own, and add `--vacancy <slug>` when it is about one vacancy. The answer gives a ticket number
 or says there is no number yet. **Report that it was passed on, and stop there**: there is no page
-to open, nothing writes back, and nobody promised a reply, a fix or a date.
+to open, nothing writes back, and no reply, fix or date is promised.

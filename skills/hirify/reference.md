@@ -67,7 +67,7 @@ contacts: an address, a form URL, or a link. Revealing the same vacancy again re
 and spends nothing, so a repeat is safe. The output states whether a reveal was used and how many
 are left.
 
-Shortlist by reading first. Revealing at random spends the user's whole day.
+Shortlist by reading first. Reveals spent at random are gone for the day.
 
 ## Apply: only on Hirify
 
