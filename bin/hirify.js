@@ -601,7 +601,10 @@ function printVacancies(list, meta) {
       bits.push([min, max].filter(Boolean).join('-') + (currency ? ` ${currency}` : ''))
     }
     if (v.verified) bits.push('verified')
-    console.log(`${v.slug}\n  ${v.title || '-'} · ${company}${bits.length ? `\n  [${bits.join(' · ')}]` : ''}`)
+    // The slug is the handle every other command takes, so it leads the card. A card
+    // without one is still worth printing for its title, but the first line has to say
+    // that there is nothing to copy, not print the word `undefined` where a slug goes.
+    console.log(`${v.slug ?? '-'}\n  ${v.title || '-'} · ${company}${bits.length ? `\n  [${bits.join(' · ')}]` : ''}`)
   }
   const total = meta?.total
   console.log(`\nShowing ${list.length}${total ? ` of ${total}` : ''}. Where to apply: hirify reveal <slug> (uses 1 reveal).`)
