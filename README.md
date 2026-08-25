@@ -43,6 +43,9 @@ computer.
 
 ## Everything else
 
+`hirify filter guide` prints what search can filter on. It comes from the server, so it is current
+by construction; nothing about filters is written into this package.
+
 Add `--json` to any command to parse the answer instead of reading it. Put `HIRIFY_DEBUG=1` in
 front of one when you need the server's own reply to attach to a bug report.
 

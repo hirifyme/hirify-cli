@@ -6,6 +6,12 @@ Commands are a noun and a verb: the noun is the thing you are working with, the 
 to it. `hirify <noun>` on its own lists the verbs that noun takes. `login`, `logout`, `auth` and
 `intro` stay single words: they are not operations on a thing.
 
+**This file describes the CLI, not the state of Hirify.** It is installed with the skill and never
+updated afterwards, so it names no filter, no limit and no number that our side can change. Those
+come from commands: `hirify filter guide` for filters, `hirify account show` for what is left,
+`hirify account show --json` for the plan and the limits. Where this file would have quoted one, it
+names the command instead.
+
 Add `--json` to any command to get the server's payload verbatim instead of the text below. Parse
 `--json`; do not parse the text, it is written for a person to read. Every failure exits non-zero and
 writes one line to stderr beginning with `hirify: `.
@@ -23,12 +29,12 @@ when you need to report a problem; the normal output never contains raw payloads
 | `vacancy apply` | free | **no**: a real application reaches a real person |
 | `feed create`, `feed deliver`, `webhook create` | free | changes the user's account |
 | `feedback send` | free | a ticket is filed |
+| `filter guide` | free: it spends nothing | reading only |
 | `api call` | whatever the path it calls costs | whatever that path does |
 
-Free is not unlimited. Every command is rate-limited per minute, `feed show` and `vacancy search`
-more tightly than the rest, and `feedback send` also per day. A burst answers `429`; wait the
-seconds it names and carry on. The current numbers come from the server:
-`hirify account show --json`, block `limits`.
+Free is not unlimited: every command is rate-limited, reading more loosely than searching. A burst
+answers `429` and names the seconds to wait. The numbers are the server's and change without this
+file: `hirify account show --json`, block `limits`.
 
 Two budgets run out, and they are separate. Vacancy opens are the allowance `vacancy read` draws
 on: it is shared with the site, so a vacancy the user opened in a browser today costs nothing here,
@@ -68,8 +74,9 @@ behind. `--limit` is the page size and arrives as the API's `per_page`; `--json`
 is never sent. An option repeated is joined with a comma, which is how the site sends a criterion
 with several values.
 
-Do not guess names or values. An unknown criterion is not refused, it narrows nothing, and a
-misspelt value returns an empty list that looks like an honest answer.
+**The criteria come from `hirify filter guide`, and only from there.** Do not guess names or
+values. An unknown criterion is not refused, it narrows nothing, and a misspelt value returns an
+empty list that looks like an honest answer.
 
 Both `feed show` and `vacancy search` page with `--page N`. The last line of a list says which page
 you are on and offers the next one when there may be another.
@@ -84,6 +91,26 @@ Vacancy cards print as:
 
 Cards never carry contacts. `company hidden` means the name is revealed by `vacancy reveal`, not
 that the field is broken.
+
+## filter guide: what search can filter on
+
+```bash
+hirify filter guide
+```
+
+Prints the filter guide the server writes: which criteria search accepts, what their values are,
+and the method for turning what a person wants into a filter that works. Free, and it needs
+`agent:read` like the other reading commands.
+
+The server derives it from the same source the site's own search reads, so it cannot fall behind
+the search. That is the whole point: nothing in this package writes filter names down, because a
+list written here goes stale silently and an agent acts on it without knowing.
+
+`--json` gives `{"guide": "<text>"}`. The text is written for a model to read, so pass it through
+rather than summarising it.
+
+A server that does not serve the guide yet answers plainly: `this Hirify server does not serve the
+filter guide yet.` Then the criteria have to come from the user, not from a guess.
 
 ## vacancy read: one vacancy in full
 
@@ -143,8 +170,8 @@ what you are sending.** It cannot be undone.
 
 - `--profile` is required when the user has more than one profile. With exactly one, it is chosen
   automatically. Never guess between several.
-- `--cover` is optional, at most 10000 characters. Write it from what the user told you and show
-  them the draft first.
+- `--cover` is optional. There is a length ceiling and the server owns it: if the letter is too
+  long, the answer says so. Write it from what the user told you and show them the draft first.
 
 Answers:
 
@@ -167,8 +194,9 @@ hirify webhook create "<name>" <url>
 
 These change the user's account. Propose, get a yes, then run them.
 
-`--filters` takes the same criteria the site's filter form produces, as JSON. Omitting it saves a
-feed with no criteria, which means "send me everything" and is legal.
+`--filters` takes the same criteria the site's filter form produces, as JSON, and the names come
+from `hirify filter guide`. Omitting it saves a feed with no criteria, which means "send me
+everything" and is legal.
 
 `webhook create` answers with the endpoint and a **secret shown once**. Hand it to the user
 immediately and tell them to store it: it signs every delivery and cannot be shown again.
@@ -179,10 +207,11 @@ immediately and tell them to store it: it signs every delivery and cannot be sho
 hirify feedback send <bug|feature> "<title>" --body "<text>" [--vacancy <slug>]
 ```
 
-Title 5 to 140 characters, body 10 to 5000. Ask the user before sending and send their words.
-The answer gives a ticket number, or says there is no number yet. There is no page to open, nothing
-writes back to the user, and no reply, fix or date is promised. Report that it was passed on and
-stop there.
+Both a title and a body are required, and the CLI says so before sending anything. Their lengths
+are the server's rule, not the CLI's: too short or too long comes back as the server's own sentence
+naming which. Ask the user before sending and send their words. The answer gives a ticket number,
+or says there is no number yet. There is no page to open, nothing writes back to the user, and no
+reply, fix or date is promised. Report that it was passed on and stop there.
 
 Refusals: too many reports in a short time (with the wait in seconds), the channel being off, or the
 report not being accepted.

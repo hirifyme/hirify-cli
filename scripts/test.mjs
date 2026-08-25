@@ -561,3 +561,87 @@ test('a name every object inherits is not a command', async () => {
     assert.match(stderr, /unknown command|has no verb|takes a verb/, argv.join(' '))
   }
 })
+
+// ── filter guide: the vocabulary comes from the server ─────────────────────
+const GUIDE = '<AVAILABLE FILTERS>\n  - grade:\n      Comma-separated: junior,middle,senior\n</AVAILABLE FILTERS>'
+
+test('filter guide asks the server and prints what it wrote', async () => {
+  const { code, stdout, seen } = await run(['filter', 'guide'], answer(200, { guide: GUIDE }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/filters/guide'])
+  // Printed as it came: the text is written for a model, so nothing here reshapes it.
+  assert.equal(stdout.trim(), GUIDE)
+})
+
+test('filter guide --json hands over the server payload', async () => {
+  const { code, stdout } = await run(['filter', 'guide', '--json'], answer(200, { guide: GUIDE }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(JSON.parse(stdout), { guide: GUIDE })
+})
+
+test('a server without the guide is told apart from a mistake in the command', async () => {
+  // What production answers today. "not found (404)" would read as a bad command and send
+  // someone looking for a typo in a command that has no arguments to get wrong.
+  const { code, stderr } = await run(['filter', 'guide'], answer(404, {
+    message: 'The route api/agent/filters/guide could not be found.',
+  }))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /this Hirify server does not serve the filter guide yet\./)
+  assert.ok(!stderr.includes('404'), 'the status code is not the story here')
+})
+
+test('an answer with no guide in it is not printed as an empty success', async () => {
+  const { code, stderr } = await run(['filter', 'guide'], answer(200, { guide: '' }))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /the server answered without a guide/)
+})
+
+// ── nothing in the package states what the server is free to change ────────
+test('nothing that ships names a search filter', async () => {
+  // The point of `filter guide`: a filter name written into this package is a snapshot,
+  // and it goes stale silently. Response fields the CLI prints are not names it asserts,
+  // so only the texts a reader acts on are checked here.
+  const { readFileSync } = await import('node:fs')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+  const cli = readFileSync(join(root, 'bin/hirify.js'), 'utf8')
+  const texts = [
+    cli.slice(cli.indexOf('const HELP ='), cli.indexOf('// ── helpers')),
+    cli.slice(cli.indexOf('const INTRO ='), cli.indexOf('function cmdIntro')),
+    readFileSync(join(root, 'skills/hirify/SKILL.md'), 'utf8'),
+    readFileSync(join(root, 'skills/hirify/reference.md'), 'utf8'),
+    readFileSync(join(root, 'README.md'), 'utf8'),
+  ]
+
+  // Names the server owns. `--grade senior` and friends lived in these texts for months.
+  const filters = /--(grade|work_format|remote_type|excluded_countries|english_level|employee_type|salary_from|salary_to|specializations|company_title|contact_types)\b/
+  for (const text of texts) {
+    const found = text.match(filters)
+    assert.equal(found, null, `a filter name is written into a shipped text: ${found?.[0]}`)
+  }
+})
+
+test('the abilities asked for at sign-in are the ones the server publishes', async () => {
+  // A frozen list is how everyone who signed in on 18.08 ended up without agent:feedback.
+  const { readFileSync } = await import('node:fs')
+  const cli = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'bin/hirify.js'), 'utf8')
+
+  assert.match(cli, /scopes_supported/, 'the discovery document is what names the abilities')
+  assert.match(cli, /scope: endpoints\.scopes/, 'and that is what the sign-in asks for')
+})
+
+test('no shipped text states a length the server owns', async () => {
+  const { readFileSync } = await import('node:fs')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const files = ['bin/hirify.js', 'skills/hirify/SKILL.md', 'skills/hirify/reference.md', 'README.md']
+
+  for (const file of files) {
+    const text = readFileSync(join(root, file), 'utf8')
+    const stated = text.match(/at most \d+ characters|between \d+ and \d+ characters|\d+ to \d+ characters/)
+    assert.equal(stated, null, `${file} states a limit the server owns: ${stated?.[0]}`)
+  }
+})

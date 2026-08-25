@@ -12,6 +12,29 @@ when you need the detail.
 Commands are a noun and a verb: `hirify vacancy read`, `hirify feed list`. A noun on its own lists
 the verbs it takes, and `hirify --help` lists the whole surface.
 
+## What this file may state, and what it must ask for
+
+This file is installed once and then sits in your harness, unchanged, while Hirify keeps shipping.
+So it holds only what stays true across that gap:
+
+- **how to work**: the order, what needs the user's permission, what cannot be undone;
+- **what the CLI does**: which command sends, which command spends, how a refusal reads.
+
+Everything that is Hirify's to change is **fetched, never written here**:
+
+| What you need | Ask for it |
+|---|---|
+| Filter names and their values | `hirify filter guide` |
+| Reveals and vacancy opens left | `hirify account show` |
+| Rate limits, plan, abilities | `hirify account show --json` |
+| The commands that exist | `hirify --help`, `hirify <noun>` |
+| Anything with no command yet | `hirify api call <path>` |
+
+**Adding a line here? Decide which half it belongs to.** If a deploy on our side could make it
+false, it does not go in this file: name the command that answers it instead. A sentence in this
+file that names a filter, a limit or a number is a sentence that will be wrong one day, and you
+will act on it without knowing.
+
 ## Two rules before anything else
 
 **Lists are free. Three commands are not, and they cost different things.**
@@ -19,9 +42,11 @@ the verbs it takes, and `hirify --help` lists the whole surface.
 - `vacancy read` spends one of the day's vacancy opens. The allowance is generous, it is the same
   one a browser uses, and re-reading a vacancy the same day costs nothing. Read freely.
 - `vacancy reveal` spends 1 reveal, and reveals are scarce. When they run out, reading still works.
-  `hirify account show` has what is left of both.
 - `vacancy apply` spends nothing and cannot be taken back. It sends a real application, with the
   user's name and profile, to a person who will read it.
+
+How many of either are left is a number only the server has: `hirify account show`. Do not carry a
+figure from one answer into the next - both move while you work.
 
 **Ask the user before every apply, and before anything that changes their account.** Reading needs
 no permission. Sending, saving and configuring do.
@@ -52,18 +77,29 @@ have to work it out or find out from a refusal.
 ## Searching
 
 `vacancy search` is a conduit to the API, not a fixed set of flags. It takes a phrase, and any
-criterion the site's own filter form can express, written as an option and passed on under that name:
+criterion the site's own filter form can express, written as an option and passed on under that
+name:
 
 ```bash
-hirify vacancy search "senior go" --grade senior --work_format remote
-hirify vacancy search "senior go" --excluded_countries ru --page 2
-hirify vacancy search "senior go" --grade senior --grade middle    # one criterion, two values
+hirify filter guide                                       # read this BEFORE building a filter
+hirify vacancy search "senior go"
+hirify vacancy search "senior go" --<criterion> <value>
+hirify vacancy search "senior go" --<criterion> a --<criterion> b   # one criterion, two values
 ```
 
-**Do not guess criterion names or their values.** Ask the server what it accepts rather than
-trying options until one works: an unknown criterion is not refused, it simply narrows nothing,
-and a misspelt value quietly returns an empty list. `--limit N` sets the page size and `--page N`
-moves through the pages.
+**`hirify filter guide` is the vocabulary.** The server writes it from the same source the site
+searches with, so it cannot drift; this file deliberately names no criterion, because a name
+written here would be a snapshot going stale on its own.
+
+**Do not guess criterion names or their values, and do not try options until one works.** A
+criterion the server does not know narrows nothing, and a misspelt value returns an empty list that
+looks like an honest "nothing matches". Read the guide, then filter.
+
+`--limit N` sets the page size and `--page N` moves through the pages. Those two are the CLI's own
+and are not filters.
+
+If the guide is not available on the server the user is on, `hirify filter guide` says so plainly.
+Then ask the user what to filter on rather than guessing names.
 
 ## Applying
 
@@ -90,11 +126,14 @@ Rules:
 These change the user's account, so the same rule applies: propose, get a yes, then do it.
 
 ```bash
-hirify feed create "Senior Go remote" --filters '{"grade":["senior"]}'
+hirify feed create "<name>" --filters '<json>'   # criteria: hirify filter guide
 hirify feed deliver <id> --telegram | --no-telegram | --webhook <id> | --no-webhook
-hirify webhook list                      # existing delivery endpoints
+hirify webhook list                              # existing delivery endpoints
 hirify webhook create "<name>" <url>
 ```
+
+`--filters` takes the same criteria the filter form on the site produces. Read `hirify filter
+guide` first and use only what it names.
 
 Creating a delivery endpoint returns a **secret that is shown once**. Give it to the user
 immediately and tell them to store it, because it cannot be shown again and it signs every delivery.
@@ -109,17 +148,25 @@ immediately and tell them to store it, because it cannot be shown again and it s
 
 ## When something goes wrong
 
-- **"you are not signed in yet"**: ask the user to run `hirify login`. On a server with no browser:
-  `hirify auth <key>`, key from hirify.me/account/api-access.
-- **401**: the sign-in expired. `hirify login` again.
-- **403**: the sign-in is missing a permission, or the plan does not include agent access. If the
-  user signed in before a permission existed, they have to sign in again to get it.
-- **429**: the reveals are spent, the day's vacancy opens are spent, or the commands came too fast.
-  The message says which. Feeds and search keep working in all three cases.
-- **A refusal on `vacancy apply`** is usually the vacancy, not the user: archived, flagged, or hosted
-  elsewhere. Read what it says and tell the user plainly.
-- **`hirify <noun> has no verb "..."`**: you used a name this CLI does not have. The message lists
-  the verbs that noun takes. Do not guess a second time; read the list.
+**The message you were given is the truth; this list is a map of the kinds, not a table to match
+strings against.** Every failure exits non-zero and writes one line to stderr. Read that line and
+tell the user what it says.
+
+- **Not signed in**: ask the user to run `hirify login`. On a server with no browser:
+  `hirify auth <key>`, key from hirify.me/account/api-access. Never run `login` yourself.
+- **The sign-in is no longer good** (401): expired or revoked. `hirify login` again.
+- **No access** (403): the sign-in is missing an ability, or the plan does not cover agent access.
+  Abilities are fixed when the user signs in and cannot be added afterwards, so a user who signed
+  in before an ability existed has to sign in again. `hirify account show --json` reports the plan.
+- **A budget or the pace** (429): reveals spent, the day's vacancy opens spent, or commands sent
+  too fast. The message says which, and feeds and search keep working in all three. What is left:
+  `hirify account show`.
+- **A refusal on `vacancy apply`** is usually about the vacancy, not the user: archived, flagged,
+  or hosted elsewhere. The server's own sentence comes through; pass it on as it is.
+- **A refusal naming a length or a value** comes from the server, not from the CLI. Do not argue
+  with it and do not assume a bound - shorten what it named and send again.
+- **`hirify <noun> has no verb "..."`**: a command name that does not exist. The message lists the
+  verbs that noun takes. Do not guess a second time; read the list.
 
 ## When no command fits
 
@@ -146,8 +193,8 @@ saves or configures.
 When the user hits something broken or wishes a feature existed, offer to send it:
 
 ```bash
-hirify feedback send bug "Reveal answers 500 on archived vacancies" --body "<what happened>"
-hirify feedback send feature "Filter by salary currency" --body "<what the user needs>"
+hirify feedback send bug "<what broke, in a line>" --body "<what happened>"
+hirify feedback send feature "<what is missing>" --body "<what the user needs>"
 ```
 
 Free, and it does not touch the reveal limit. Ask before sending, send the user's words rather than

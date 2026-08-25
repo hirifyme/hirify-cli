@@ -25,20 +25,24 @@ const AUTH_FILE = join(CONFIG_DIR, 'auth.json')
 // The key file from 0.1: still read for anyone who has one, never written again.
 const LEGACY_KEY_FILE = join(CONFIG_DIR, 'key')
 
-// Asked for at sign-in, all at once, and every one of them before publication on purpose:
-// an OAuth token carries exactly what the person agreed to, and nothing can add an ability
-// to it later without sending them back through the consent screen. The server narrows the
-// set to what it actually supports, so asking for one it does not know yet costs nothing.
-const SCOPES = 'agent:read agent:reveal agent:apply agent:manage agent:feedback offline_access'
+// What to ask for at sign-in when the server does not publish its own list. An OAuth token
+// carries exactly what the person agreed to, and nothing can add an ability to it later
+// without sending them back through the consent screen, so a sign-in that asks for too
+// little is a sign-in the person has to repeat.
+//
+// This is a fallback, not the list. The authorization server publishes `scopes_supported`
+// (RFC 8414) and that is what we ask for, because a list frozen here is a list that goes
+// stale: on 18.08 the server had no `agent:feedback` and dropped it from the request in
+// silence, and everyone who signed in that day still cannot send a report.
+const FALLBACK_SCOPES = 'agent:read agent:reveal agent:apply agent:manage agent:feedback offline_access'
 const CALLBACK_PATH = '/callback'
 // How long we wait for the browser. The authorization code lives the same five minutes.
 const LOGIN_TIMEOUT_MS = 5 * 60 * 1000
 
-// Feedback limits, mirrored from the API so a person is told what is wrong before the
-// request is sent, in words, instead of getting a field-error object back.
+// The two kinds of report the API takes. This one is ours to know: it is the word a
+// person types, and the CLI has to tell them which words there are before it can send
+// anything at all.
 const FEEDBACK_TYPES = ['bug', 'feature']
-const TITLE_RANGE = [5, 140]
-const BODY_RANGE = [10, 5000]
 
 // Read from package.json rather than repeated here: the server records which client sent
 // a report, and a version that drifts from the published one makes that record useless.
@@ -74,12 +78,14 @@ const HELP = `hirify - job search for AI agents
   hirify webhook list             your delivery endpoints
   hirify webhook create <name> <url>
 
+  hirify filter guide             what search can filter on, from the server
   hirify feedback send <kind>     report a bug or ask for a feature
   hirify api call <path>          any agent API path, raw   [--method M] [--data JSON]
 
   --json                          raw JSON instead of text
 
-Free: account show, feed list, feed show, vacancy search, profile list, webhook list.
+Free: account show, feed list, feed show, vacancy search, profile list, webhook list,
+filter guide.
 vacancy read costs one of the day's vacancy opens, and the day is generous.
 vacancy reveal costs 1 reveal, the scarce one. Repeating either on the same vacancy is free.
 vacancy apply sends a real application to a recruiter. Ask the person first.
@@ -331,15 +337,22 @@ async function discover() {
     authorization_endpoint: `${API}/oauth/authorize`,
     token_endpoint: `${API}/oauth/token`,
     registration_endpoint: `${API}/oauth/register`,
+    scopes: FALLBACK_SCOPES,
   }
   try {
     const res = await fetch(`${API}/.well-known/oauth-authorization-server`, { headers: { Accept: 'application/json' } })
     if (!res.ok) return fallback
     const meta = await res.json()
+    // The abilities are the server's to name. We ask for every one it publishes, because
+    // the person is agreeing once and cannot be given a missing one afterwards.
+    const published = Array.isArray(meta.scopes_supported)
+      ? meta.scopes_supported.filter((s) => typeof s === 'string' && s).join(' ')
+      : ''
     return {
       authorization_endpoint: meta.authorization_endpoint || fallback.authorization_endpoint,
       token_endpoint: meta.token_endpoint || fallback.token_endpoint,
       registration_endpoint: meta.registration_endpoint || fallback.registration_endpoint,
+      scopes: published || fallback.scopes,
     }
   } catch {
     return fallback
@@ -497,7 +510,7 @@ async function cmdLogin(args) {
     response_type: 'code',
     client_id: clientId,
     redirect_uri: redirectUri,
-    scope: SCOPES,
+    scope: endpoints.scopes,
     state,
     code_challenge: challenge,
     code_challenge_method: 'S256',
@@ -565,7 +578,7 @@ async function cmdLogin(args) {
     token_endpoint: endpoints.token_endpoint,
     access_token: body.access_token,
     refresh_token: body.refresh_token || null,
-    scope: body.scope || SCOPES,
+    scope: body.scope || endpoints.scopes,
     expires_at: body.expires_in ? now() + Number(body.expires_in) : null,
   })
 
@@ -731,10 +744,13 @@ async function cmdFeedShow(args, words) {
  *
  * The CLI keeps no list of filters on purpose. The endpoint accepts the same criteria the
  * site's own filter form produces, and the site can express all of them: a CLI that names
- * them one flag at a time decides what is expressible, and it decided wrong for a long time
- * (two flags against roughly thirty criteria). So `--grade senior` and `--excluded_countries
- * ru` travel by the same rule, and a criterion added on the server works from here the day
- * it ships. `hirify vacancy search --help` is not the vocabulary; the server publishes that.
+ * them one flag at a time decides what is expressible, and it decided wrong for a long time.
+ * So every option travels by one rule, and a criterion added on the server works from here
+ * the day it ships.
+ *
+ * This is also why no example here names a criterion. `hirify filter guide` is the
+ * vocabulary, the server writes it, and an example frozen in this file would be a second
+ * answer to the same question, going stale at its own pace.
  */
 async function cmdVacancySearch(args, words) {
   const p = new URLSearchParams()
@@ -884,8 +900,11 @@ async function cmdVacancyReveal(args, words) {
 /**
  * Report a bug or ask for a feature. Free: it does not touch the reveal limit.
  *
- * The length bounds are checked here as well as on the server, so a mistake comes back
- * as a sentence about the title being too short rather than as a field-error object.
+ * What is required is checked here, because a missing `--body` is a fact about the command
+ * and needs no round trip. How long a title may be is NOT checked here: that is the
+ * server's rule, it has changed before, and a copy of it in this file is a copy that goes
+ * stale and starts refusing reports the server would have taken. The server's own words
+ * come back instead.
  */
 async function cmdFeedbackSend(args, words) {
   const [type, title] = words
@@ -899,13 +918,7 @@ async function cmdFeedbackSend(args, words) {
   const vacancy = flag(args, '--vacancy')
 
   if (!title) die('a title is required: hirify feedback send ' + type + ' "<title>" --body "<text>"')
-  if (title.length < TITLE_RANGE[0] || title.length > TITLE_RANGE[1]) {
-    die(`the title should be between ${TITLE_RANGE[0]} and ${TITLE_RANGE[1]} characters. Yours is ${title.length}.`)
-  }
   if (!text) die('the report needs a body: add --body "<text>"')
-  if (text.length < BODY_RANGE[0] || text.length > BODY_RANGE[1]) {
-    die(`the body should be between ${BODY_RANGE[0]} and ${BODY_RANGE[1]} characters. Yours is ${text.length}.`)
-  }
 
   const res = await api('/agent/feedback', {
     method: 'POST',
@@ -933,10 +946,11 @@ async function cmdFeedbackSend(args, words) {
     die('the feedback channel is not available right now. Please try again later.')
   }
   if (res.status === 422) {
-    // We check the same bounds above, so this means ours and the server's drifted apart.
-    // The person cannot act on that, so they get a plain sentence and we keep the detail.
+    // The server owns the lengths and it says which one is wrong, so its sentence is the
+    // useful one. Ours would have to name a bound, and naming a bound we do not own is how
+    // a client starts telling people a limit that moved.
     if (process.env.HIRIFY_DEBUG) console.error(`hirify: server answered 422: ${JSON.stringify(res.body)}`)
-    die('the report was not accepted. Please check the title and the text and try again.')
+    die(serverMessage(res.body) || 'the report was not accepted. Please check the title and the text and try again.')
   }
 
   // Say `number`, never `id`. The number is the one a human at Hirify recognises; the id
@@ -986,10 +1000,10 @@ async function cmdVacancyApply(args, words) {
   const profile = flag(args, '--profile')
   const cover = flag(args, '--cover')
 
+  // A profile id is a number, and that is a fact about the flag, not a server limit. How
+  // long a cover letter may be is the server's rule and is not copied here: it answers 422
+  // in its own words, and those travel back untouched.
   if (profile !== null && !/^\d+$/.test(profile)) die('--profile takes a profile id, a number. See hirify profile list.')
-  if (cover !== null && cover.length > 10000) {
-    die(`the cover letter should be at most 10000 characters. Yours is ${cover.length}.`)
-  }
 
   const res = await api(`/agent/vacancies/${encodeURIComponent(slug)}/apply`, {
     method: 'POST',
@@ -1018,8 +1032,8 @@ async function cmdVacancyApply(args, words) {
 /** Save a search, the same thing a person does with the filter form on the site. */
 async function cmdFeedCreate(args, words) {
   const [name] = words
+  // Required is ours to check; how long is the server's, and it says so in its own words.
   if (!name) die('a name is required: hirify feed create "<name>" [--filters \'<json>\']')
-  if (name.length > 120) die(`the name should be at most 120 characters. Yours is ${name.length}.`)
 
   // An empty set of criteria is legal and means "send me everything", exactly as it does
   // on the site. So the field is always sent, and only bad JSON is refused.
@@ -1029,7 +1043,9 @@ async function cmdFeedCreate(args, words) {
     try {
       filters = JSON.parse(raw)
     } catch {
-      die('--filters expects JSON, for example --filters \'{"grade":["senior"]}\'')
+      // No example criterion in the message: the shape is ours to state, the keys are not.
+      die('--filters expects JSON: the same criteria the site\'s filter form produces.\n' +
+        '        Their names and values: hirify filter guide')
     }
   }
 
@@ -1100,7 +1116,6 @@ async function cmdWebhookList() {
 async function cmdWebhookCreate(args, words) {
   const [name, url] = words
   if (!name || !url) die('both a name and an address are required: hirify webhook create "<name>" <url>')
-  if (name.length > 60) die(`the name should be at most 60 characters. Yours is ${name.length}.`)
 
   const res = await api('/agent/webhooks', { method: 'POST', payload: { name, url }, allow: [201, 403, 422] })
   if (res.status === 403) die(serverMessage(res.body) || 'creating a delivery endpoint is not available on this account.')
@@ -1162,12 +1177,18 @@ Start with what the account already has
   site's own filter form can express, written as an option:
 
     hirify vacancy search "senior go"
-    hirify vacancy search "senior go" --grade senior --work_format remote
     hirify vacancy search "senior go" --page 2
+    hirify vacancy search "senior go" --<criterion> <value>
 
-  The criteria are the server's, not this CLI's, so there is no list of them here to fall
-  behind. An option is sent on under the name you gave it; give one twice and the values are
-  joined, the way the site sends a filter with several values.
+  The criteria are the server's, not this CLI's, and nothing here names one on purpose: a
+  name written into this text would be a copy, and copies go stale quietly. Ask instead:
+
+    hirify filter guide
+
+  It prints what search can filter on and what the values are, written by the server from
+  the same source the site searches with. An option is sent on under the name you gave it;
+  give one twice and the values are joined, the way the site sends a filter with several
+  values.
 
 Read before you spend anything
   A card is a headline: title, company, terms. Fit is decided in the text.
@@ -1279,6 +1300,35 @@ async function cmdApiCall(args, words) {
   if (res.status >= 400) die(`the server answered ${res.status}. The answer is above.`)
 }
 
+/**
+ * The filter vocabulary, printed as the server wrote it.
+ *
+ * `guide`, not `show`, and the reason is what comes back: this is not a list of keys but
+ * the method the site's own filter generator works by, and calling it `show` would promise
+ * a list. `eco mail inbox` is the same shape in the same grammar.
+ *
+ * Nothing about filters is written down in this file, and nothing should be. The endpoint
+ * derives the list from the source the site searches with, so it cannot drift; a copy here
+ * would start drifting the day it was written.
+ */
+async function cmdFilterGuide() {
+  const res = await api('/agent/filters/guide', { allow: [200, 404] })
+
+  // Older servers do not serve it. Say that, rather than "not found (404)", which reads as
+  // a mistake in the command. And do not offer a substitute: there is nothing here that
+  // knows the filters, and inventing advice about them is the whole problem this fixes.
+  if (res.status === 404) {
+    die('this Hirify server does not serve the filter guide yet.\n' +
+      '        Search still takes every criterion the site\'s filter form can express, but\n' +
+      '        their names have to come from someone who knows them.')
+  }
+
+  const guide = typeof res.body?.guide === 'string' ? res.body.guide.trim() : ''
+  if (!guide) die('the server answered without a guide. Please try again in a minute.')
+
+  out(res.body, () => console.log(guide))
+}
+
 /** The skill ships through skills.sh now: one command installs it into every harness. */
 function cmdSkill() {
   console.log('The rules for your agent install with one command:\n\n  npx skills add hirifyme/hirify-cli\n')
@@ -1302,6 +1352,7 @@ const NOUNS = {
   profile: { list: cmdProfileList },
   webhook: { list: cmdWebhookList, create: cmdWebhookCreate },
   feedback: { send: cmdFeedbackSend },
+  filter: { guide: cmdFilterGuide },
   api: { call: cmdApiCall },
 }
 
