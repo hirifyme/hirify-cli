@@ -10,10 +10,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'hirify.js')
+
+// A throwaway config directory for the whole run. `logout` deletes the stored sign-in, and
+// a test that reached the real one would sign the person running the suite out of Hirify.
+const CONFIG_HOME = mkdtempSync(join(tmpdir(), 'hirify-test-'))
 
 /**
  * A vacancy shaped like the API's own detail resource. Tests override only the field
@@ -57,16 +63,23 @@ async function run(argv, reply) {
   const seen = []
   const server = createServer((req, res) => {
     seen.push(req.url)
-    const { status = 200, body = {}, headers = {} } = reply(req) ?? {}
+    // `text` sends the bytes as they are, for the cases where the answer is not JSON.
+    const { status = 200, body = {}, text = null, headers = {} } = reply(req) ?? {}
     res.writeHead(status, { 'Content-Type': 'application/json', ...headers })
-    res.end(JSON.stringify(body))
+    res.end(text === null ? JSON.stringify(body) : text)
   })
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   const api = `http://127.0.0.1:${server.address().port}`
 
   try {
     const child = spawn(process.execPath, [CLI, ...argv], {
-      env: { ...process.env, HIRIFY_API: api, HIRIFY_KEY: 'test-key', HIRIFY_DEBUG: '' },
+      env: {
+        ...process.env,
+        HIRIFY_API: api,
+        HIRIFY_KEY: 'test-key',
+        HIRIFY_DEBUG: '',
+        XDG_CONFIG_HOME: CONFIG_HOME,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let stdout = ''
@@ -84,7 +97,7 @@ const answer = (status, body) => () => ({ status, body })
 
 // ── read: the card ─────────────────────────────────────────────────────────
 test('read prints the vacancy, its terms and its text', async () => {
-  const { code, stdout } = await run(['read', 'senior-go-engineer'], answer(200, OK_BODY))
+  const { code, stdout } = await run(['vacancy', 'read', 'senior-go-engineer'], answer(200, OK_BODY))
 
   assert.equal(code, 0)
   assert.match(stdout, /^senior-go-engineer\n {2}Senior Go Engineer · Acme\n {2}\[remote · employment · b2 · 5000-7000 USD · verified\]/)
@@ -97,7 +110,7 @@ test('read prints the vacancy, its terms and its text', async () => {
 })
 
 test('read turns the html description into lines a terminal can print', async () => {
-  const { stdout } = await run(['read', 'senior-go-engineer'], answer(200, OK_BODY))
+  const { stdout } = await run(['vacancy', 'read', 'senior-go-engineer'], answer(200, OK_BODY))
 
   assert.match(stdout, /We build payments\./)
   assert.match(stdout, /- Go & Postgres/)
@@ -107,28 +120,28 @@ test('read turns the html description into lines a terminal can print', async ()
 })
 
 test('read says which of the two ways to apply this vacancy takes', async () => {
-  const hosted = await run(['read', 'senior-go-engineer'], answer(200, OK_BODY))
-  assert.match(hosted.stdout, /Apply on Hirify: hirify apply senior-go-engineer/)
+  const hosted = await run(['vacancy', 'read', 'senior-go-engineer'], answer(200, OK_BODY))
+  assert.match(hosted.stdout, /Apply on Hirify: hirify vacancy apply senior-go-engineer/)
 
-  const elsewhere = await run(['read', 'senior-go-engineer'], answer(200, {
+  const elsewhere = await run(['vacancy', 'read', 'senior-go-engineer'], answer(200, {
     ...OK_BODY,
     data: { ...VACANCY, can_apply_directly: false },
   }))
-  assert.match(elsewhere.stdout, /Where to apply: hirify reveal senior-go-engineer \(uses 1 reveal\)/)
-  assert.ok(!elsewhere.stdout.includes('hirify apply'), 'an apply we cannot make is never offered')
+  assert.match(elsewhere.stdout, /Where to apply: hirify vacancy reveal senior-go-engineer \(uses 1 reveal\)/)
+  assert.ok(!elsewhere.stdout.includes('hirify vacancy apply'), 'an apply we cannot make is never offered')
 })
 
 test('read reports what the open cost and what is left', async () => {
-  const first = await run(['read', 'senior-go-engineer'], answer(200, OK_BODY))
+  const first = await run(['vacancy', 'read', 'senior-go-engineer'], answer(200, OK_BODY))
   assert.match(first.stdout, /\(1 vacancy open used\)/)
   assert.match(first.stdout, /998 opens left today/)
 
-  const again = await run(['read', 'senior-go-engineer'], answer(200, { ...OK_BODY, charged: false }))
+  const again = await run(['vacancy', 'read', 'senior-go-engineer'], answer(200, { ...OK_BODY, charged: false }))
   assert.match(again.stdout, /\(no vacancy open used: this one was already opened today\)/)
 })
 
 test('read keeps quiet about a text that is not there', async () => {
-  const { stdout } = await run(['read', 'senior-go-engineer'], answer(200, {
+  const { stdout } = await run(['vacancy', 'read', 'senior-go-engineer'], answer(200, {
     ...OK_BODY,
     data: { ...VACANCY, description: null },
   }))
@@ -137,7 +150,7 @@ test('read keeps quiet about a text that is not there', async () => {
 })
 
 test('read --json hands over the server payload untouched', async () => {
-  const { code, stdout } = await run(['read', 'senior-go-engineer', '--json'], answer(200, OK_BODY))
+  const { code, stdout } = await run(['vacancy', 'read', 'senior-go-engineer', '--json'], answer(200, OK_BODY))
 
   assert.equal(code, 0)
   assert.deepEqual(JSON.parse(stdout), OK_BODY)
@@ -146,36 +159,36 @@ test('read --json hands over the server payload untouched', async () => {
 // ── read: flags and arguments ──────────────────────────────────────────────
 // Two defects in this CLI were flags being read as data. Both directions are pinned here.
 test('a flag before the slug does not become the slug', async () => {
-  const { code, seen } = await run(['read', '--json', 'senior-go-engineer'], answer(200, OK_BODY))
+  const { code, seen } = await run(['vacancy', 'read', '--json', 'senior-go-engineer'], answer(200, OK_BODY))
 
   assert.equal(code, 0)
   assert.deepEqual(seen, ['/api/agent/vacancies/senior-go-engineer'])
 })
 
 test('read without a slug asks for one and sends nothing', async () => {
-  const { code, stderr, seen } = await run(['read'], answer(200, OK_BODY))
+  const { code, stderr, seen } = await run(['vacancy', 'read'], answer(200, OK_BODY))
 
   assert.equal(code, 1)
-  assert.match(stderr, /a vacancy slug is required: hirify read <slug>/)
+  assert.match(stderr, /a vacancy slug is required: hirify vacancy read <slug>/)
   assert.deepEqual(seen, [], 'nothing is asked of the server')
 })
 
 test('a slug with a slash in it is still asked for as one slug', async () => {
-  const { seen } = await run(['read', 'a/b'], answer(404, { message: 'Vacancy not found.' }))
+  const { seen } = await run(['vacancy', 'read', 'a/b'], answer(404, { message: 'Vacancy not found.' }))
 
   assert.deepEqual(seen, ['/api/agent/vacancies/a%2Fb'])
 })
 
 // ── read: refusals ─────────────────────────────────────────────────────────
 test('an unknown slug is named as an unknown slug', async () => {
-  const { code, stderr } = await run(['read', 'nope'], answer(404, { error: true, message: 'Vacancy not found.' }))
+  const { code, stderr } = await run(['vacancy', 'read', 'nope'], answer(404, { error: true, message: 'Vacancy not found.' }))
 
   assert.equal(code, 1)
   assert.match(stderr, /there is no vacancy with that slug\./)
 })
 
 test("the day's opens running out is not reported as reveals running out", async () => {
-  const { code, stderr } = await run(['read', 'senior-go-engineer'], answer(429, {
+  const { code, stderr } = await run(['vacancy', 'read', 'senior-go-engineer'], answer(429, {
     error: true,
     message: 'Rate limit exceeded. You cannot open more than 1000 vacancies per day.',
     quota: { action: 'vacancy_opens', limit: 1000, used: 1000, remaining: 0 },
@@ -187,7 +200,7 @@ test("the day's opens running out is not reported as reveals running out", async
 })
 
 test('reveals running out still reads as reveals running out', async () => {
-  const { code, stderr } = await run(['reveal', 'senior-go-engineer'], answer(429, {
+  const { code, stderr } = await run(['vacancy', 'reveal', 'senior-go-engineer'], answer(429, {
     error: true,
     message: 'Rate limit exceeded. You have no contact reveals left right now.',
     quota: { action: 'contact_reveals', used: 30, remaining: 0 },
@@ -198,7 +211,7 @@ test('reveals running out still reads as reveals running out', async () => {
 })
 
 test('going too fast is told apart from running out', async () => {
-  const { code, stderr } = await run(['read', 'senior-go-engineer'], () => ({
+  const { code, stderr } = await run(['vacancy', 'read', 'senior-go-engineer'], () => ({
     status: 429,
     body: { error: true, message: 'Too Many Attempts.' },
     headers: { 'Retry-After': '12' },
@@ -210,7 +223,7 @@ test('going too fast is told apart from running out', async () => {
 
 // ── what the rest of the CLI now says ──────────────────────────────────────
 test('me shows the opens left next to the reveals left', async () => {
-  const { stdout } = await run(['me'], answer(200, {
+  const { stdout } = await run(['account', 'show'], answer(200, {
     data: {
       plan: 'pro',
       quota: {
@@ -228,13 +241,14 @@ test('me shows the opens left next to the reveals left', async () => {
 })
 
 test('a list points at reading one before revealing it', async () => {
-  const { stdout } = await run(['search', 'go'], answer(200, {
+  const { stdout } = await run(['vacancy', 'search', 'go'], answer(200, {
     data: [VACANCY],
     meta: { page: 1, per_page: 20, total: 1, last_page: 1 },
   }))
 
   assert.match(stdout, /^senior-go-engineer\n {2}Senior Go Engineer · Acme$/m)
-  assert.match(stdout, /Read one: hirify read <slug>\. Where to apply: hirify reveal <slug> \(uses 1 reveal\)\./)
+  assert.match(stdout, /^Read one: hirify vacancy read <slug>$/m)
+  assert.match(stdout, /^Where to apply: hirify vacancy reveal <slug> \(uses 1 reveal\)$/m)
 })
 
 // ── search as a conduit ────────────────────────────────────────────────────
@@ -242,7 +256,7 @@ test('a list points at reading one before revealing it', async () => {
 // be the thing that decides which of them are expressible.
 test('any option is passed on to the API under the name it was given', async () => {
   const { seen } = await run(
-    ['search', 'senior', 'go', '--grade', 'senior', '--work_format', 'remote', '--excluded_countries', 'ru'],
+    ['vacancy', 'search', 'senior', 'go', '--grade', 'senior', '--work_format', 'remote', '--excluded_countries', 'ru'],
     answer(200, { data: [], meta: {} }),
   )
 
@@ -255,7 +269,7 @@ test('any option is passed on to the API under the name it was given', async () 
 
 test('an option nobody has ever written a flag for still reaches the API', async () => {
   const { seen } = await run(
-    ['search', '--a_filter_invented_after_this_test', 'yes', '--another=42'],
+    ['vacancy', 'search', '--a_filter_invented_after_this_test', 'yes', '--another=42'],
     answer(200, { data: [], meta: {} }),
   )
 
@@ -266,7 +280,7 @@ test('an option nobody has ever written a flag for still reaches the API', async
 
 test('the same option twice is joined the way the site sends a multi-value filter', async () => {
   const { seen } = await run(
-    ['search', '--grade', 'senior', '--grade', 'middle'],
+    ['vacancy', 'search', '--grade', 'senior', '--grade', 'middle'],
     answer(200, { data: [], meta: {} }),
   )
 
@@ -274,7 +288,7 @@ test('the same option twice is joined the way the site sends a multi-value filte
 })
 
 test('--limit still works and arrives under the name the server publishes', async () => {
-  const { seen } = await run(['search', 'go', '--limit', '5'], answer(200, { data: [], meta: {} }))
+  const { seen } = await run(['vacancy', 'search', 'go', '--limit', '5'], answer(200, { data: [], meta: {} }))
 
   const q = new URLSearchParams(seen[0].split('?')[1])
   assert.equal(q.get('per_page'), '5')
@@ -282,7 +296,7 @@ test('--limit still works and arrives under the name the server publishes', asyn
 })
 
 test('--json steers the CLI and is never sent as a filter', async () => {
-  const { seen, stdout } = await run(['search', 'go', '--json'], answer(200, { data: [], meta: {} }))
+  const { seen, stdout } = await run(['vacancy', 'search', 'go', '--json'], answer(200, { data: [], meta: {} }))
 
   assert.equal(new URLSearchParams(seen[0].split('?')[1]).get('json'), null)
   assert.equal(new URLSearchParams(seen[0].split('?')[1]).get('search'), 'go')
@@ -290,20 +304,20 @@ test('--json steers the CLI and is never sent as a filter', async () => {
 })
 
 test('a flag before the words does not eat one of them', async () => {
-  const { seen } = await run(['search', '--json', 'senior', 'go'], answer(200, { data: [], meta: {} }))
+  const { seen } = await run(['vacancy', 'search', '--json', 'senior', 'go'], answer(200, { data: [], meta: {} }))
 
   assert.equal(new URLSearchParams(seen[0].split('?')[1]).get('search'), 'senior go')
 })
 
 // ── paging ─────────────────────────────────────────────────────────────────
 test('search takes a page', async () => {
-  const { seen } = await run(['search', 'go', '--page', '3'], answer(200, { data: [], meta: {} }))
+  const { seen } = await run(['vacancy', 'search', 'go', '--page', '3'], answer(200, { data: [], meta: {} }))
 
   assert.equal(new URLSearchParams(seen[0].split('?')[1]).get('page'), '3')
 })
 
 test('feed takes a page and a limit', async () => {
-  const { seen } = await run(['feed', '31', '--page', '2', '--limit', '5'], answer(200, { data: [], meta: {} }))
+  const { seen } = await run(['feed', 'show', '31', '--page', '2', '--limit', '5'], answer(200, { data: [], meta: {} }))
 
   assert.equal(seen[0].split('?')[0], '/api/agent/feeds/31/vacancies')
   const q = new URLSearchParams(seen[0].split('?')[1])
@@ -312,13 +326,13 @@ test('feed takes a page and a limit', async () => {
 })
 
 test('feed with no options asks for the feed and nothing else', async () => {
-  const { seen } = await run(['feed', '31'], answer(200, { data: [], meta: {} }))
+  const { seen } = await run(['feed', 'show', '31'], answer(200, { data: [], meta: {} }))
 
   assert.deepEqual(seen, ['/api/agent/feeds/31/vacancies'])
 })
 
 test('the page and the next one are named, and a full page offers the next', async () => {
-  const { stdout } = await run(['search', 'go'], answer(200, {
+  const { stdout } = await run(['vacancy', 'search', 'go'], answer(200, {
     data: [VACANCY, { ...VACANCY, slug: 'b' }],
     meta: { page: 2, per_page: 2, total: 2, last_page: 1 },
   }))
@@ -330,14 +344,14 @@ test('the page and the next one are named, and a full page offers the next', asy
 test('a total is printed only when it is a total and not the size of the page', async () => {
   // What the agent search endpoint answers today: total equal to what it just returned.
   // "Showing 2 of 2" would read as "that is the whole board" and it is not.
-  const clamped = await run(['search', 'go'], answer(200, {
+  const clamped = await run(['vacancy', 'search', 'go'], answer(200, {
     data: [VACANCY, { ...VACANCY, slug: 'b' }],
     meta: { page: 1, per_page: 2, total: 2, last_page: 1 },
   }))
   assert.match(clamped.stdout, /^Showing 2, page 1\.$/m)
 
   // What it answers once the server counts properly: printed with no change here.
-  const real = await run(['search', 'go'], answer(200, {
+  const real = await run(['vacancy', 'search', 'go'], answer(200, {
     data: [VACANCY, { ...VACANCY, slug: 'b' }],
     meta: { page: 1, per_page: 2, total: 1665, last_page: 833 },
   }))
@@ -346,7 +360,7 @@ test('a total is printed only when it is a total and not the size of the page', 
 })
 
 test('the last page does not offer another one', async () => {
-  const { stdout } = await run(['search', 'go'], answer(200, {
+  const { stdout } = await run(['vacancy', 'search', 'go'], answer(200, {
     data: [VACANCY],
     meta: { page: 4, per_page: 20, total: 61, last_page: 4 },
   }))
@@ -361,7 +375,9 @@ test('intro explains the work and asks nothing of the network', async () => {
 
   assert.equal(code, 0)
   assert.deepEqual(seen, [], 'intro runs before anyone has signed in')
-  for (const topic of [/hirify feeds/, /hirify search/, /hirify read/, /hirify reveal/, /hirify apply/, /hirify login/]) {
+  const topics = [/hirify feed list/, /hirify vacancy search/, /hirify vacancy read/,
+    /hirify vacancy reveal/, /hirify vacancy apply/, /hirify login/, /hirify api call/]
+  for (const topic of topics) {
     assert.match(stdout, topic)
   }
   assert.match(stdout, /Reading one vacancy in full spends one of the day's vacancy opens/)
@@ -395,5 +411,153 @@ test('read is in the help', async () => {
   const { code, stdout } = await run(['--help'], answer(200, {}))
 
   assert.equal(code, 0)
-  assert.match(stdout, /hirify read <slug> +one vacancy in full, with its text/)
+  assert.match(stdout, /hirify vacancy read <slug> +one vacancy in full, with its text/)
+})
+
+// ── the grammar: <noun> <verb> ─────────────────────────────────────────────
+// The verb is data in the same sense a slug is, so the two defects pinned above -
+// a flag read as data, a flag hiding data - are pinned here for the verb as well.
+test('a flag written before the verb does not stand in for it', async () => {
+  const { code, seen } = await run(['feed', '--json', 'show', '31'], answer(200, { data: [], meta: {} }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/feeds/31/vacancies'])
+})
+
+test('a noun on its own names the verbs it takes', async () => {
+  const { code, stderr, seen } = await run(['vacancy'], answer(200, {}))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /hirify vacancy takes a verb: search, read, reveal, apply/)
+  assert.deepEqual(seen, [], 'nothing is asked of the server')
+})
+
+test('a noun asked for help answers on stdout and succeeds', async () => {
+  const { code, stdout } = await run(['feed', '--help'], answer(200, {}))
+
+  assert.equal(code, 0)
+  assert.match(stdout, /hirify feed takes a verb: list, show, create, deliver/)
+})
+
+test('a verb the noun does not have is named, with the ones it does', async () => {
+  const { code, stderr, seen } = await run(['webhook', 'destroy'], answer(200, {}))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /hirify webhook has no verb "destroy"/)
+  assert.match(stderr, /hirify webhook takes a verb: list, create/)
+  assert.deepEqual(seen, [], 'nothing is asked of the server')
+})
+
+test('every noun and verb in the help is a command that exists', async () => {
+  const { stdout } = await run(['--help'], answer(200, {}))
+
+  // The help is the list an agent works from. A line in it that no router entry answers
+  // sends that agent to an "unknown command", which reads as the tool being broken.
+  const listed = [...stdout.matchAll(/^ {2}hirify ([a-z]+)(?: ([a-z]+))?/gm)]
+    .map(([, noun, verb]) => [noun, verb].filter(Boolean).join(' '))
+
+  assert.ok(listed.length >= 15, `the help lists ${listed.length} commands`)
+  for (const command of listed) {
+    const { code, stderr } = await run([...command.split(' '), '--help'], answer(200, {}))
+    assert.ok(!/unknown command|has no verb/.test(stderr), `${command}: ${stderr.trim()}`)
+    assert.notEqual(code, 127, `${command} did not run`)
+  }
+})
+
+// ── api call: the raw door ─────────────────────────────────────────────────
+test('api call sends the path as written and prints the answer as it came', async () => {
+  const { code, stdout, seen } = await run(
+    ['api', 'call', '/agent/vacancies?search=go&per_page=2'],
+    answer(200, { data: [], meta: { page: 1 } }),
+  )
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/vacancies?search=go&per_page=2'])
+  assert.deepEqual(JSON.parse(stdout), { data: [], meta: { page: 1 } })
+})
+
+test('api call reaches a path this CLI has no command for', async () => {
+  const { code, seen } = await run(['api', 'call', '/agent/something-new'], answer(200, { data: {} }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/something-new'])
+})
+
+test('the path is the same one however it is written', async () => {
+  for (const written of ['/agent/me', 'agent/me', '/api/agent/me']) {
+    const { seen } = await run(['api', 'call', written], answer(200, { data: {} }))
+    assert.deepEqual(seen, ['/api/agent/me'], `written as ${written}`)
+  }
+})
+
+test('--data makes it a POST and travels as the body', async () => {
+  let body = ''
+  const { code, seen } = await run(['api', 'call', '/agent/feeds', '--data', '{"name":"Go"}'], (req) => {
+    req.on('data', (c) => { body += c })
+    return { status: 201, body: { data: { id: 7 } } }
+  })
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/feeds'])
+  assert.deepEqual(JSON.parse(body), { name: 'Go' })
+})
+
+test('--method sends the method it names', async () => {
+  let method = ''
+  const { code } = await run(['api', 'call', '/agent/feeds/7/delivery', '--method', 'put', '--data', '{"notify_telegram":true}'],
+    (req) => { method = req.method; return { status: 200, body: { data: {} } } })
+
+  assert.equal(code, 0)
+  assert.equal(method, 'PUT')
+})
+
+test('a method the API does not have is refused before anything is sent', async () => {
+  const { code, stderr, seen } = await run(['api', 'call', '/agent/me', '--method', 'fetch'], answer(200, {}))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /--method takes one of: GET, POST, PUT, PATCH, DELETE\./)
+  assert.deepEqual(seen, [], 'nothing is asked of the server')
+})
+
+test('--data that is not JSON is refused before anything is sent', async () => {
+  const { code, stderr, seen } = await run(['api', 'call', '/agent/feeds', '--data', 'name=Go'], answer(200, {}))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /--data expects JSON/)
+  assert.deepEqual(seen, [], 'nothing is asked of the server')
+})
+
+test('a refusal keeps the server own words and still exits non-zero', async () => {
+  const { code, stdout, stderr } = await run(['api', 'call', '/agent/feeds'], answer(422, {
+    error: true,
+    message: 'The name field is required.',
+    errors: { name: ['The name field is required.'] },
+  }))
+
+  assert.equal(code, 1)
+  // Ours would be "that command could not be completed". The point of this door is that
+  // the server's own answer arrives instead, and on stdout, where it can be parsed.
+  assert.deepEqual(JSON.parse(stdout).errors, { name: ['The name field is required.'] })
+  assert.match(stderr, /the server answered 422\. The answer is above\./)
+})
+
+test('an answer that is not JSON is printed as it came rather than dropped', async () => {
+  const { code, stdout } = await run(['api', 'call', '/agent/me'], () => ({
+    status: 502,
+    text: '<html><body>Bad Gateway</body></html>',
+    headers: { 'Content-Type': 'text/html' },
+  }))
+
+  assert.equal(code, 1)
+  assert.equal(stdout.trim(), '<html><body>Bad Gateway</body></html>')
+})
+
+test('a name every object inherits is not a command', async () => {
+  // `PLAIN[noun]` finds `toString` on the prototype and runs it: exit 0, nothing done,
+  // which reads as the command having worked. Only own names are commands.
+  for (const argv of [['toString'], ['constructor'], ['vacancy', 'toString'], ['feed', 'constructor']]) {
+    const { code, stderr } = await run(argv, answer(200, {}))
+    assert.equal(code, 1, argv.join(' '))
+    assert.match(stderr, /unknown command|has no verb|takes a verb/, argv.join(' '))
+  }
 })

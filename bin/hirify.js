@@ -54,35 +54,39 @@ const USER_AGENT = `hirify-cli/${VERSION}`
 
 const HELP = `hirify - job search for AI agents
 
-  hirify intro                 what this can do, and in what order
+  hirify intro                    what this can do, and in what order
 
-  hirify login                 sign in through your browser
-  hirify me                    your plan and the reveals you have left
-  hirify feeds                 the feeds you saved on the site
-  hirify feed <id>             vacancies from one feed      [--limit N]
-  hirify search <query>        search vacancies             [--limit N] [--grade G]
-  hirify read <slug>           one vacancy in full, with its text
-  hirify reveal <slug>         where to apply: uses 1 reveal
-  hirify profiles              the profiles you can apply with
+  hirify login                    sign in through your browser
+  hirify logout                   sign out on this computer
+  hirify account show             your plan and both allowances
 
-  hirify apply <slug>          apply on Hirify              [--profile N] [--cover T]
-  hirify feed create <name>    save a search                [--filters JSON] [--webhook N]
-  hirify feed delivery <id>    change how a feed reaches you
-  hirify webhooks              your delivery endpoints
-  hirify webhooks create <name> <url>
+  hirify vacancy search <query>   search the board          [--limit N] [--page N]
+  hirify vacancy read <slug>      one vacancy in full, with its text
+  hirify vacancy reveal <slug>    where to apply: uses 1 reveal
+  hirify vacancy apply <slug>     apply on Hirify           [--profile N] [--cover T]
 
-  hirify feedback <kind>       report a bug or ask for a feature  [--body T] [--vacancy S]
-  hirify logout                sign out on this computer
+  hirify feed list                the feeds you saved on the site
+  hirify feed show <id>           vacancies from one feed   [--limit N] [--page N]
+  hirify feed create <name>       save a search             [--filters JSON] [--webhook N]
+  hirify feed deliver <id>        change how a feed reaches you
 
-  --json                       raw JSON instead of text
+  hirify profile list             the profiles you can apply with
+  hirify webhook list             your delivery endpoints
+  hirify webhook create <name> <url>
 
-Free: me, feeds, feed, search, profiles, webhooks.
-read costs one of the day's vacancy opens, and the day is generous.
-reveal costs 1 reveal, the scarce one. Repeating either on the same vacancy is free.
-apply sends a real application to a recruiter. Ask the person first.
-hirify me shows what is left of both.
+  hirify feedback send <kind>     report a bug or ask for a feature
+  hirify api call <path>          any agent API path, raw   [--method M] [--data JSON]
+
+  --json                          raw JSON instead of text
+
+Free: account show, feed list, feed show, vacancy search, profile list, webhook list.
+vacancy read costs one of the day's vacancy opens, and the day is generous.
+vacancy reveal costs 1 reveal, the scarce one. Repeating either on the same vacancy is free.
+vacancy apply sends a real application to a recruiter. Ask the person first.
+What is left of both: hirify account show.
 
 New here: hirify intro
+A noun on its own lists its verbs: hirify vacancy
 Rules for your agent: npx skills add hirifyme/hirify-cli
 No browser (CI, servers): hirify auth <key>, or the HIRIFY_KEY variable.
 Key: hirify.me/account/api-access`
@@ -97,7 +101,7 @@ const die = (msg, code = 1) => { console.error(`hirify: ${msg}`); process.exit(c
 // It used to be the other way round, a list of options known to take a value. That list
 // was the ceiling: an option missing from it silently swallowed nothing and its value was
 // read as data.
-const BOOLEAN_FLAGS = new Set(['--json', '--no-browser', '--telegram', '--no-telegram', '--no-webhook'])
+const BOOLEAN_FLAGS = new Set(['--json', '--help', '--no-browser', '--telegram', '--no-telegram', '--no-webhook'])
 
 // Ours, not the API's. These never reach a query string.
 const CLI_ONLY = new Set(['json'])
@@ -114,10 +118,10 @@ const flag = (args, name) => {
 }
 
 /**
- * The arguments that are not options. Every command reads its slug, id or verb through
- * this, because reading `args[0]` directly made a flag look like one: `hirify webhooks
- * --json` was refused as an unknown verb, and `hirify feed --json` asked the server for a
- * feed literally called "--json".
+ * The arguments that are not options. The router finds the verb through this, and every
+ * command reads its slug or id through it, because reading `args[0]` directly made a flag
+ * look like one: `hirify webhook --json list` was refused as an unknown verb, and `hirify
+ * feed --json show 7` asked the server for a feed literally called "--json".
  */
 const positional = (args) => {
   const rest = []
@@ -244,7 +248,7 @@ async function request(path, method, token, payload) {
  * needs it: a 429 there means "too many reports", not "your reveals are used up", and
  * saying the wrong one sends the person looking in the wrong place.
  */
-async function api(path, { method = 'GET', payload = null, allow = [] } = {}) {
+async function api(path, { method = 'GET', payload = null, allow = [], raw = false } = {}) {
   let res = await request(path, method, await accessToken(), payload)
 
   // A 401 on a live session is ordinary: the access token is dropped when the refresh
@@ -255,6 +259,19 @@ async function api(path, { method = 'GET', payload = null, allow = [] } = {}) {
       const fresh = await refreshSession(session)
       res = await request(path, method, fresh.access_token, payload)
     }
+  }
+
+  // `api call` reads every answer itself, refusal included: that is what it is for, and a
+  // sentence of ours in place of the server's own reply would defeat the point of a raw door.
+  if (raw) {
+    const text = await res.text()
+    let body = null
+    try {
+      body = JSON.parse(text)
+    } catch {
+      // Not JSON. The text is handed over as it came rather than thrown away.
+    }
+    return { status: res.status, body, text }
   }
 
   if (allow.includes(res.status)) {
@@ -555,7 +572,7 @@ async function cmdLogin(args) {
   console.log(`\nSigned in. Access saved to ${AUTH_FILE}`)
   // Show the remaining limit right away: it is the first thing anyone asks anyway.
   try {
-    await cmdMe()
+    await cmdAccountShow()
   } catch {
     // The sign-in worked; the plan summary is a nicety, not a requirement.
   }
@@ -599,7 +616,7 @@ function cmdLogout() {
 }
 
 // ── commands ───────────────────────────────────────────────────────────────
-async function cmdMe() {
+async function cmdAccountShow() {
   const body = await api('/agent/me')
   const d = body?.data ?? {}
   const left = count(d?.quota?.reveal?.remaining)
@@ -621,7 +638,7 @@ async function cmdMe() {
   })
 }
 
-async function cmdFeeds() {
+async function cmdFeedList() {
   const body = await api('/agent/feeds')
   const list = body?.data ?? []
   out(body, () => {
@@ -630,7 +647,7 @@ async function cmdFeeds() {
       const off = f.is_active === false ? '  (off)' : ''
       console.log(`${String(f.id ?? '-').padEnd(6)} ${f.name || '(untitled)'}${off}`)
     }
-    console.log(`\nVacancies from a feed: hirify feed <id>`)
+    console.log(`\nVacancies from a feed: hirify feed show <id>`)
   })
 }
 
@@ -682,7 +699,8 @@ function printVacancies(list, meta) {
   const where = page === null ? '' : `, page ${page}${lastPage !== null && lastPage > 1 ? ` of ${lastPage}` : ''}`
   console.log(`\nShowing ${list.length}${of}${where}.`)
   // The order the product asks for: read what looks right, reveal only what fits.
-  console.log('Read one: hirify read <slug>. Where to apply: hirify reveal <slug> (uses 1 reveal).')
+  console.log('Read one: hirify vacancy read <slug>')
+  console.log('Where to apply: hirify vacancy reveal <slug> (uses 1 reveal)')
 
   // A full page is the only honest sign that there may be another one while `last_page`
   // says otherwise. Offering the next page costs nothing if it turns out to be empty.
@@ -692,19 +710,10 @@ function printVacancies(list, meta) {
   if (more && page !== null) console.log(`More: add --page ${page + 1}`)
 }
 
-async function cmdFeed(args) {
-  // `feed` reads one feed, and it also carries the two verbs that change feeds. Feed ids
-  // are numbers, so a word in that position can only be a verb and never an id.
-  // Both halves matter. The verb is found among the positionals, so a flag before it
-  // cannot hide it; and what the sub-command gets is the positionals AFTER the verb, not
-  // the raw argv sliced at index 1. Slicing raw argv broke as soon as a flag stood in
-  // front: `feed --limit 5 delivery 7` used to change the delivery of feed 5.
-  const rest = positional(args)
-  if (rest[0] === 'create') return cmdFeedCreate(args, rest.slice(1))
-  if (rest[0] === 'delivery') return cmdFeedDelivery(args, rest.slice(1))
-
-  const id = rest[0]
-  if (!id) die('a feed id is required: hirify feed <id>  (list them with hirify feeds)')
+/** The vacancies in one saved feed, using the criteria the feed already holds. */
+async function cmdFeedShow(args, words) {
+  const [id] = words
+  if (!id) die('a feed id is required: hirify feed show <id>  (list them with hirify feed list)')
 
   // A feed already carries its own criteria, so only the two that say which slice of it to
   // return travel from here. Without `--page` the second page of a feed was unreachable.
@@ -725,14 +734,14 @@ async function cmdFeed(args) {
  * them one flag at a time decides what is expressible, and it decided wrong for a long time
  * (two flags against roughly thirty criteria). So `--grade senior` and `--excluded_countries
  * ru` travel by the same rule, and a criterion added on the server works from here the day
- * it ships. `hirify search --help` is not the vocabulary; the server publishes that.
+ * it ships. `hirify vacancy search --help` is not the vocabulary; the server publishes that.
  */
-async function cmdSearch(args) {
+async function cmdVacancySearch(args, words) {
   const p = new URLSearchParams()
 
   // The phrase first, so an explicit `--search` still wins if someone writes both.
-  const words = positional(args).join(' ')
-  if (words) p.set('search', words)
+  const phrase = words.join(' ')
+  if (phrase) p.set('search', phrase)
 
   for (const [name, value] of options(args)) {
     if (CLI_ONLY.has(name)) continue
@@ -793,9 +802,12 @@ function detailRows(pairs) {
  * The same vacancy read twice in a day costs nothing the second time, and the allowance is
  * shared with the site, so a vacancy opened in a browser is already paid for.
  */
-async function cmdRead(args) {
-  const [slug] = positional(args)
-  if (!slug) die('a vacancy slug is required: hirify read <slug>  (slugs come from hirify search or hirify feed)')
+async function cmdVacancyRead(args, words) {
+  const [slug] = words
+  if (!slug) {
+    die('a vacancy slug is required: hirify vacancy read <slug>' +
+      '\n        Slugs come from hirify vacancy search or hirify feed show.')
+  }
 
   const res = await api(`/agent/vacancies/${encodeURIComponent(slug)}`, { allow: [200, 404] })
   if (res.status === 404) die('there is no vacancy with that slug.')
@@ -824,8 +836,8 @@ async function cmdRead(args) {
     // Which of the two ways to apply this one takes, from the server's own flag. Guessing
     // it from anything else is how a card came to promise an apply that answered 422.
     console.log(d.can_apply_directly
-      ? `Apply on Hirify: hirify apply ${d.slug ?? slug}`
-      : `Where to apply: hirify reveal ${d.slug ?? slug} (uses 1 reveal)`)
+      ? `Apply on Hirify: hirify vacancy apply ${d.slug ?? slug}`
+      : `Where to apply: hirify vacancy reveal ${d.slug ?? slug} (uses 1 reveal)`)
 
     console.log(res.body?.charged === false
       ? '(no vacancy open used: this one was already opened today)'
@@ -847,9 +859,9 @@ function contactLine(c) {
   return c === null || c === undefined ? null : JSON.stringify(c)
 }
 
-async function cmdReveal(args) {
-  const [slug] = positional(args)
-  if (!slug) die('a slug is required: hirify reveal <slug>')
+async function cmdVacancyReveal(args, words) {
+  const [slug] = words
+  if (!slug) die('a vacancy slug is required: hirify vacancy reveal <slug>')
   const body = await api(`/agent/vacancies/${encodeURIComponent(slug)}/reveal`, { method: 'POST' })
   const d = body?.data ?? {}
   out(body, () => {
@@ -875,18 +887,18 @@ async function cmdReveal(args) {
  * The length bounds are checked here as well as on the server, so a mistake comes back
  * as a sentence about the title being too short rather than as a field-error object.
  */
-async function cmdFeedback(args) {
-  const [type, title] = positional(args)
+async function cmdFeedbackSend(args, words) {
+  const [type, title] = words
   if (!FEEDBACK_TYPES.includes(type)) {
     die('say what kind of report this is, bug or feature:\n' +
-      '        hirify feedback bug "<title>" --body "<what happened>"\n' +
-      '        hirify feedback feature "<title>" --body "<what you need>"')
+      '        hirify feedback send bug "<title>" --body "<what happened>"\n' +
+      '        hirify feedback send feature "<title>" --body "<what you need>"')
   }
 
   const text = flag(args, '--body')
   const vacancy = flag(args, '--vacancy')
 
-  if (!title) die('a title is required: hirify feedback ' + type + ' "<title>" --body "<text>"')
+  if (!title) die('a title is required: hirify feedback send ' + type + ' "<title>" --body "<text>"')
   if (title.length < TITLE_RANGE[0] || title.length > TITLE_RANGE[1]) {
     die(`the title should be between ${TITLE_RANGE[0]} and ${TITLE_RANGE[1]} characters. Yours is ${title.length}.`)
   }
@@ -946,8 +958,8 @@ async function cmdFeedback(args) {
   })
 }
 
-/** The profiles a person can apply with. Free, and the list `apply` picks from. */
-async function cmdProfiles() {
+/** The profiles a person can apply with. Free, and the list `vacancy apply` picks from. */
+async function cmdProfileList() {
   const body = await api('/agent/profiles')
   const list = body?.data ?? []
   out(body, () => {
@@ -958,7 +970,7 @@ async function cmdProfiles() {
       const state = [p.status, p.is_complete === false ? 'incomplete' : null].filter(Boolean).join(' · ')
       console.log(`${String(p.profile_id ?? '-').padEnd(6)} ${p.name || p.title || '(untitled)'}${state ? `  [${state}]` : ''}`)
     }
-    console.log('\nApply with one: hirify apply <slug> --profile <id>')
+    console.log('\nApply with one: hirify vacancy apply <slug> --profile <id>')
   })
 }
 
@@ -967,14 +979,14 @@ async function cmdProfiles() {
  * that cannot be undone, so it never guesses: if the account has several profiles and
  * none was named, the server refuses and we pass that on rather than picking one.
  */
-async function cmdApply(args) {
-  const [slug] = positional(args)
-  if (!slug) die('a vacancy slug is required: hirify apply <slug> [--profile <id>]')
+async function cmdVacancyApply(args, words) {
+  const [slug] = words
+  if (!slug) die('a vacancy slug is required: hirify vacancy apply <slug> [--profile <id>]')
 
   const profile = flag(args, '--profile')
   const cover = flag(args, '--cover')
 
-  if (profile !== null && !/^\d+$/.test(profile)) die('--profile takes a profile id, a number. See hirify profiles.')
+  if (profile !== null && !/^\d+$/.test(profile)) die('--profile takes a profile id, a number. See hirify profile list.')
   if (cover !== null && cover.length > 10000) {
     die(`the cover letter should be at most 10000 characters. Yours is ${cover.length}.`)
   }
@@ -1026,7 +1038,7 @@ async function cmdFeedCreate(args, words) {
   if (args.includes('--telegram')) payload.notify_telegram = true
   const webhook = flag(args, '--webhook')
   if (webhook) {
-    if (!/^\d+$/.test(webhook)) die('--webhook takes an endpoint id, a number. See hirify webhooks.')
+    if (!/^\d+$/.test(webhook)) die('--webhook takes an endpoint id, a number. See hirify webhook list.')
     payload.webhook_endpoint_id = Number(webhook)
   }
 
@@ -1037,9 +1049,9 @@ async function cmdFeedCreate(args, words) {
 }
 
 /** Change where a feed is delivered, without touching what it searches for. */
-async function cmdFeedDelivery(args, words) {
+async function cmdFeedDeliver(args, words) {
   const [id] = words
-  if (!id || !/^\d+$/.test(id)) die('a feed id is required: hirify feed delivery <id> [--telegram] [--webhook <id>]')
+  if (!id || !/^\d+$/.test(id)) die('a feed id is required: hirify feed deliver <id> [--telegram] [--webhook <id>]')
 
   const payload = {}
   if (args.includes('--telegram')) payload.notify_telegram = true
@@ -1047,7 +1059,7 @@ async function cmdFeedDelivery(args, words) {
   if (args.includes('--no-webhook')) payload.webhook_endpoint_id = null
   const webhook = flag(args, '--webhook')
   if (webhook) {
-    if (!/^\d+$/.test(webhook)) die('--webhook takes an endpoint id, a number. See hirify webhooks.')
+    if (!/^\d+$/.test(webhook)) die('--webhook takes an endpoint id, a number. See hirify webhook list.')
     payload.webhook_endpoint_id = Number(webhook)
   }
   if (!Object.keys(payload).length) {
@@ -1055,7 +1067,7 @@ async function cmdFeedDelivery(args, words) {
   }
 
   const res = await api(`/agent/feeds/${encodeURIComponent(id)}/delivery`, { method: 'PUT', payload, allow: [200, 404, 422] })
-  if (res.status === 404) die('there is no feed with that id. See hirify feeds.')
+  if (res.status === 404) die('there is no feed with that id. See hirify feed list.')
   if (res.status === 422) die(serverMessage(res.body) || 'the delivery settings were not accepted.')
 
   out(res.body, () => printFeedState(res.body?.data ?? {}, 'Updated.'))
@@ -1070,28 +1082,24 @@ function printFeedState(f, lead) {
   console.log(where.length ? `Delivered to: ${where.join(' and ')}` : 'Not delivered anywhere yet.')
 }
 
-/** Delivery endpoints, and creating one. Listing is free; creating needs the plan. */
-async function cmdWebhooks(args) {
-  const rest = positional(args)
-  if (rest[0] === 'create') return cmdWebhookCreate(args, rest.slice(1))
-  if (rest[0] && rest[0] !== 'list') die('hirify webhooks lists them. To add one: hirify webhooks create "<name>" <url>')
-
+/** The delivery endpoints on the account. Free; creating one needs the plan. */
+async function cmdWebhookList() {
   const body = await api('/agent/webhooks')
   const list = body?.data ?? []
   out(body, () => {
     if (!list.length) {
-      return console.log('You have no delivery endpoints yet. Create one: hirify webhooks create "<name>" <url>')
+      return console.log('You have no delivery endpoints yet. Create one: hirify webhook create "<name>" <url>')
     }
     for (const w of list) {
       console.log(`${String(w.id ?? '-').padEnd(6)} ${w.name || '(untitled)'}  ${w.url ?? '-'}${w.state ? `  [${w.state}]` : ''}`)
     }
-    console.log('\nSend a feed to one: hirify feed delivery <feed id> --webhook <id>')
+    console.log('\nSend a feed to one: hirify feed deliver <feed id> --webhook <id>')
   })
 }
 
 async function cmdWebhookCreate(args, words) {
   const [name, url] = words
-  if (!name || !url) die('both a name and an address are required: hirify webhooks create "<name>" <url>')
+  if (!name || !url) die('both a name and an address are required: hirify webhook create "<name>" <url>')
   if (name.length > 60) die(`the name should be at most 60 characters. Yours is ${name.length}.`)
 
   const res = await api('/agent/webhooks', { method: 'POST', payload: { name, url }, allow: [201, 403, 422] })
@@ -1111,8 +1119,8 @@ async function cmdWebhookCreate(args, words) {
 }
 
 /** The fallback for CI and servers with no browser. The normal way in is `hirify login`. */
-function cmdAuth(args) {
-  const [key] = positional(args)
+function cmdAuth(args, words) {
+  const [key] = words
   if (!key) {
     die('to sign in through the browser: `hirify login`.\n' +
       '        With a key (CI, servers): `hirify auth <key>`, from hirify.me/account/api-access')
@@ -1146,16 +1154,16 @@ Start with what the account already has
   Most people who use Hirify have saved a filter or two on the site. Those are feeds, and they
   are the best place to start, because someone has already said in them what they want.
 
-    hirify me                    the plan, and both allowances
-    hirify feeds                 what this account has saved
-    hirify feed 31               the vacancies in one of them
+    hirify account show          the plan, and both allowances
+    hirify feed list             what this account has saved
+    hirify feed show 31          the vacancies in one of them
 
   When no feed fits, search the whole board. Search takes a phrase, and any criterion the
   site's own filter form can express, written as an option:
 
-    hirify search "senior go"
-    hirify search "senior go" --grade senior --work_format remote
-    hirify search "senior go" --page 2
+    hirify vacancy search "senior go"
+    hirify vacancy search "senior go" --grade senior --work_format remote
+    hirify vacancy search "senior go" --page 2
 
   The criteria are the server's, not this CLI's, so there is no list of them here to fall
   behind. An option is sent on under the name you gave it; give one twice and the values are
@@ -1164,7 +1172,7 @@ Start with what the account already has
 Read before you spend anything
   A card is a headline: title, company, terms. Fit is decided in the text.
 
-    hirify read senior-go-engineer
+    hirify vacancy read senior-go-engineer
 
   This prints the whole vacancy, and it also says which of the two ways to apply this one
   takes, so you do not have to work that out or find out from a refusal.
@@ -1176,10 +1184,10 @@ What costs what
   nothing. Read as much as you need to.
   Revealing where to apply spends 1 reveal, and reveals are the scarce one. Protect that
   number: shortlist by reading, then reveal only the ones worth applying to.
-  hirify me shows both.
+  hirify account show has both.
 
 Where to apply
-    hirify reveal senior-go-engineer
+    hirify vacancy reveal senior-go-engineer
 
   Gives the company, its LinkedIn page when we know it, and the address to send the
   application to. Revealing the same vacancy again returns the same thing and costs nothing.
@@ -1189,8 +1197,8 @@ Applying
   boards. For those, reveal brings back the address and the person applies themselves.
   Vacancies hosted on Hirify can be applied to from here:
 
-    hirify profiles
-    hirify apply senior-go-engineer --profile 4 --cover "..."
+    hirify profile list
+    hirify vacancy apply senior-go-engineer --profile 4 --cover "..."
 
   An application reaches a real person and cannot be recalled. Ask first, every time, and
   show what you are about to send. Nothing follows up afterwards: the recruiter replies
@@ -1198,9 +1206,15 @@ Applying
 
 Two more things
   A saved search can be created from here and delivered to Telegram or to a server of yours:
-  hirify feed create, hirify feed delivery, hirify webhooks.
-  Something broken or missing: hirify feedback bug "<title>" --body "<what happened>". It
+  hirify feed create, hirify feed deliver, hirify webhook list.
+  Something broken or missing: hirify feedback send bug "<title>" --body "<what happened>". It
   reaches the team and costs nothing.
+
+If a command you need is not here
+  hirify api call /agent/me sends a request to the agent API exactly as you write it and
+  prints the answer as it comes back, so a gap in this CLI is a detour and not a dead end.
+  Prefer the commands above where one fits: they say what a thing costs and what a refusal
+  means, and this one cannot.
 
 If you are an agent
   Install the working rules once: npx skills add hirifyme/hirify-cli. They cover the order
@@ -1212,6 +1226,59 @@ function cmdIntro() {
   console.log(INTRO)
 }
 
+// What `api call` will send. Anything else is a typo rather than a method the API has.
+const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+
+/**
+ * `/agent/me`, `agent/me` and `/api/agent/me` are one path written three ways, and all
+ * three are things people write. They all arrive at the API as the same request.
+ */
+function apiPath(path) {
+  const rooted = path.startsWith('/') ? path : `/${path}`
+  return rooted.startsWith('/api/') ? rooted.slice(4) : rooted
+}
+
+/**
+ * The raw door. Every other command is a shape we chose for one job; this one sends what
+ * you write to the agent API and prints what comes back, so a job this CLI has no command
+ * for is a detour rather than a dead end.
+ *
+ * Deliberately uninterpreted. The sign-in is attached, the path and the body go as written,
+ * and the answer is printed as it arrived, refusals included: a sentence of ours in place of
+ * the server's own reply is exactly what this command exists to get out of the way. That
+ * also means it cannot tell you what a call costs, which the named commands can.
+ */
+async function cmdApiCall(args, words) {
+  const [path] = words
+  if (!path) {
+    die('a path is required: hirify api call /agent/me\n' +
+      '        Paths are the ones the agent API publishes, and they begin with /agent/.')
+  }
+
+  const data = flag(args, '--data')
+  // A body means a write, so `--data` on its own is a POST, the way curl reads it. Any
+  // other method is written out.
+  const method = (flag(args, '--method') || (data ? 'POST' : 'GET')).toUpperCase()
+  if (!HTTP_METHODS.includes(method)) die(`--method takes one of: ${HTTP_METHODS.join(', ')}.`)
+
+  let payload = null
+  if (data) {
+    try {
+      payload = JSON.parse(data)
+    } catch {
+      die('--data expects JSON, for example --data \'{"profile_id":4}\'')
+    }
+  }
+
+  const res = await api(apiPath(path), { method, payload, raw: true })
+
+  // The body as it came: pretty-printed when it is JSON, verbatim when it is not.
+  const text = res.body === null ? res.text.trim() : JSON.stringify(res.body, null, 2)
+  if (text) console.log(text)
+  // On stderr, so that stdout stays the server's answer and nothing else.
+  if (res.status >= 400) die(`the server answered ${res.status}. The answer is above.`)
+}
+
 /** The skill ships through skills.sh now: one command installs it into every harness. */
 function cmdSkill() {
   console.log('The rules for your agent install with one command:\n\n  npx skills add hirifyme/hirify-cli\n')
@@ -1219,15 +1286,44 @@ function cmdSkill() {
 }
 
 // ── router ─────────────────────────────────────────────────────────────────
-const [cmd, ...args] = process.argv.slice(2)
-const routes = {
-  login: cmdLogin, logout: cmdLogout, auth: cmdAuth,
-  me: cmdMe, feeds: cmdFeeds, feed: cmdFeed, search: cmdSearch, read: cmdRead, reveal: cmdReveal,
-  profiles: cmdProfiles, apply: cmdApply, webhooks: cmdWebhooks,
-  feedback: cmdFeedback,
+// Commands that are not something you do to a thing. Signing in is not an operation on a
+// vacancy or a feed, and `intro` is the first thing anyone runs, so it stays one word.
+const PLAIN = {
   intro: cmdIntro, skill: cmdSkill,
+  login: cmdLogin, logout: cmdLogout, auth: cmdAuth,
 }
 
-if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') { console.log(HELP); process.exit(0) }
-if (!routes[cmd]) die(`unknown command: ${cmd}\n\n${HELP}`)
-await routes[cmd](args)
+// Everything else is a noun and a verb, the grammar the rest of our tools already use.
+// The noun is the thing you are working with, the verb is what you are doing to it.
+const NOUNS = {
+  account: { show: cmdAccountShow },
+  vacancy: { search: cmdVacancySearch, read: cmdVacancyRead, reveal: cmdVacancyReveal, apply: cmdVacancyApply },
+  feed: { list: cmdFeedList, show: cmdFeedShow, create: cmdFeedCreate, deliver: cmdFeedDeliver },
+  profile: { list: cmdProfileList },
+  webhook: { list: cmdWebhookList, create: cmdWebhookCreate },
+  feedback: { send: cmdFeedbackSend },
+  api: { call: cmdApiCall },
+}
+
+const [noun, ...args] = process.argv.slice(2)
+
+if (!noun || noun === '--help' || noun === '-h' || noun === 'help') { console.log(HELP); process.exit(0) }
+
+// `Object.hasOwn`, not a plain lookup: every object inherits `toString` and `constructor`,
+// and `hirify toString` used to find one and run it, which exits 0 having done nothing.
+if (Object.hasOwn(PLAIN, noun)) {
+  await PLAIN[noun](args, positional(args))
+} else if (Object.hasOwn(NOUNS, noun)) {
+  const verbs = NOUNS[noun]
+  const known = `hirify ${noun} takes a verb: ${Object.keys(verbs).join(', ')}`
+  if (args.includes('--help') || args.includes('-h')) { console.log(known); process.exit(0) }
+
+  // The verb is read from the positionals, so an option written in front of it cannot
+  // stand in for it: `hirify feed --json list` is still the list.
+  const [verb, ...rest] = positional(args)
+  if (!verb) die(known)
+  if (!Object.hasOwn(verbs, verb)) die(`hirify ${noun} has no verb "${verb}".\n        ${known}`)
+  await verbs[verb](args, rest)
+} else {
+  die(`unknown command: ${noun}\n\n${HELP}`)
+}

@@ -2,6 +2,10 @@
 
 Written for an agent. Every command, what it costs, what it answers, and how it refuses.
 
+Commands are a noun and a verb: the noun is the thing you are working with, the verb is what you do
+to it. `hirify <noun>` on its own lists the verbs that noun takes. `login`, `logout`, `auth` and
+`intro` stay single words: they are not operations on a thing.
+
 Add `--json` to any command to get the server's payload verbatim instead of the text below. Parse
 `--json`; do not parse the text, it is written for a person to read. Every failure exits non-zero and
 writes one line to stderr beginning with `hirify: `.
@@ -13,21 +17,23 @@ when you need to report a problem; the normal output never contains raw payloads
 
 | Command | Cost | Reversible |
 |---|---|---|
-| `me`, `feeds`, `feed`, `search`, `profiles`, `webhooks` | free: they spend nothing | reading only |
-| `read` | 1 vacancy open from a generous daily allowance, repeats the same day are free | reading only |
-| `reveal` | 1 reveal, repeats on the same vacancy are free | reading only |
-| `apply` | free | **no**: a real application reaches a real person |
-| `feed create`, `feed delivery`, `webhooks create` | free | changes the user's account |
-| `feedback` | free | a ticket is filed |
+| `account show`, `feed list`, `feed show`, `vacancy search`, `profile list`, `webhook list` | free: they spend nothing | reading only |
+| `vacancy read` | 1 vacancy open from a generous daily allowance, repeats the same day are free | reading only |
+| `vacancy reveal` | 1 reveal, repeats on the same vacancy are free | reading only |
+| `vacancy apply` | free | **no**: a real application reaches a real person |
+| `feed create`, `feed deliver`, `webhook create` | free | changes the user's account |
+| `feedback send` | free | a ticket is filed |
+| `api call` | whatever the path it calls costs | whatever that path does |
 
-Free is not unlimited. Every command is rate-limited per minute, `feed` and `search` more tightly
-than the rest, and `feedback` also per day. A burst answers `429`; wait the seconds it names and
-carry on. The current numbers come from the server: `hirify me --json`, block `limits`.
+Free is not unlimited. Every command is rate-limited per minute, `feed show` and `vacancy search`
+more tightly than the rest, and `feedback send` also per day. A burst answers `429`; wait the
+seconds it names and carry on. The current numbers come from the server:
+`hirify account show --json`, block `limits`.
 
-Two budgets run out, and they are separate. Vacancy opens are the allowance `read` draws on: it is
-shared with the site, so a vacancy the user opened in a browser today costs nothing here, and it is
-sized so that reading is not something to ration. Reveals are the scarce one. Both are in
-`hirify me`, and in `hirify me --json` under `quota.read` and `quota.reveal`.
+Two budgets run out, and they are separate. Vacancy opens are the allowance `vacancy read` draws
+on: it is shared with the site, so a vacancy the user opened in a browser today costs nothing here,
+and it is sized so that reading is not something to ration. Reveals are the scarce one. Both are in
+`hirify account show`, and in `hirify account show --json` under `quota.read` and `quota.reveal`.
 
 ## Signing in
 
@@ -43,20 +49,21 @@ again.
 ## Reading
 
 ```bash
-hirify me
-hirify feeds
-hirify feed <id> [--limit N] [--page N]
-hirify search "<phrase>" [--<criterion> <value>]... [--limit N] [--page N]
+hirify account show
+hirify feed list
+hirify feed show <id> [--limit N] [--page N]
+hirify vacancy search "<phrase>" [--<criterion> <value>]... [--limit N] [--page N]
 ```
 
-`me` reports the plan, the reveals left, the vacancy opens left today, and reveal usage over 7 and
-30 days. Check it before spending reveals. Both allowances come as one number, not a fraction.
+`account show` reports the plan, the reveals left, the vacancy opens left today, and reveal usage
+over 7 and 30 days. Check it before spending reveals. Both allowances come as one number, not a
+fraction.
 
-`feeds` lists saved searches as `<id> <name>`, with `(off)` for an inactive one. `feed <id>` returns
-that feed's vacancies, using the criteria saved in the feed.
+`feed list` lists saved searches as `<id> <name>`, with `(off)` for an inactive one. `feed show
+<id>` returns that feed's vacancies, using the criteria saved in the feed.
 
-`search` is a conduit. The words are the phrase; every option is forwarded to the API under the
-name you gave it, so the criteria are the server's and this CLI holds no copy of them to fall
+`vacancy search` is a conduit. The words are the phrase; every option is forwarded to the API under
+the name you gave it, so the criteria are the server's and this CLI holds no copy of them to fall
 behind. `--limit` is the page size and arrives as the API's `per_page`; `--json` steers the CLI and
 is never sent. An option repeated is joined with a comma, which is how the site sends a criterion
 with several values.
@@ -64,8 +71,8 @@ with several values.
 Do not guess names or values. An unknown criterion is not refused, it narrows nothing, and a
 misspelt value returns an empty list that looks like an honest answer.
 
-Both `feed` and `search` page with `--page N`. The last line of a list says which page you are on
-and offers the next one when there may be another.
+Both `feed show` and `vacancy search` page with `--page N`. The last line of a list says which page
+you are on and offers the next one when there may be another.
 
 Vacancy cards print as:
 
@@ -75,13 +82,13 @@ Vacancy cards print as:
   [<remote> · <format> · <employment> · <english> · <salary> · verified]
 ```
 
-Cards never carry contacts. `company hidden` means the name is revealed by `reveal`, not that the
-field is broken.
+Cards never carry contacts. `company hidden` means the name is revealed by `vacancy reveal`, not
+that the field is broken.
 
-## Read: one vacancy in full
+## vacancy read: one vacancy in full
 
 ```bash
-hirify read <slug>
+hirify vacancy read <slug>
 ```
 
 The card plus everything else the vacancy page shows: area, grade, skills, location, when it was
@@ -94,12 +101,13 @@ browser is already paid for. The output states whether an open was used and how 
 
 The last line before that says which way to apply:
 
-- `Apply on Hirify: hirify apply <slug>` - the vacancy is hosted here.
-- `Where to apply: hirify reveal <slug> (uses 1 reveal)` - it came from elsewhere, so the user
-  applies themselves. Take this from `read` rather than finding out from a refusal on `apply`.
+- `Apply on Hirify: hirify vacancy apply <slug>` - the vacancy is hosted here.
+- `Where to apply: hirify vacancy reveal <slug> (uses 1 reveal)` - it came from elsewhere, so the
+  user applies themselves. Take this from `vacancy read` rather than finding out from a refusal on
+  `vacancy apply`.
 
 Contacts, the apply destination and where the vacancy came from are never in this answer. That is
-what `reveal` is for.
+what `vacancy reveal` is for.
 
 With `--json`, `data.description` is HTML (`data.description_format` says so) and the text output is
 the same content flattened for a terminal. `charged` and `quota` sit next to `data`.
@@ -108,10 +116,10 @@ Refusals: `there is no vacancy with that slug.`, and, when the day's opens are s
 opened as many vacancies today as the daily allowance covers.` - feeds and search still work then,
 and so does any vacancy already read today.
 
-## Reveal: where to apply
+## vacancy reveal: where to apply
 
 ```bash
-hirify reveal <slug>
+hirify vacancy reveal <slug>
 ```
 
 Spends 1 reveal and returns the company, its LinkedIn page when known, and one or more
@@ -119,19 +127,19 @@ contacts: an address, a form URL, or a link. Revealing the same vacancy again re
 and spends nothing, so a repeat is safe. The output states whether a reveal was used and how many
 are left.
 
-Shortlist with `read` first. A reveal spent at random is spent.
+Shortlist with `vacancy read` first. A reveal spent at random is spent.
 
-## Apply: only on Hirify
+## vacancy apply: only on Hirify
 
 ```bash
-hirify profiles
-hirify apply <slug> [--profile <id>] [--cover "<text>"]
+hirify profile list
+hirify vacancy apply <slug> [--profile <id>] [--cover "<text>"]
 ```
 
-`profiles` lists what the user can apply with: `<profile_id> <name> [status · incomplete]`.
+`profile list` lists what the user can apply with: `<profile_id> <name> [status · incomplete]`.
 
-`apply` sends an application through Hirify. **Ask the user first, every time, and show what you are
-sending.** It cannot be undone.
+`vacancy apply` sends an application through Hirify. **Ask the user first, every time, and show
+what you are sending.** It cannot be undone.
 
 - `--profile` is required when the user has more than one profile. With exactly one, it is chosen
   automatically. Never guess between several.
@@ -144,16 +152,17 @@ Answers:
   where they choose to.
 - `there is no vacancy with that slug.`
 - a refusal in the server's own words, which covers archived, flagged, someone else's profile, and
-  **vacancies not hosted on Hirify**. For those, use `reveal` and let the user apply themselves.
+  **vacancies not hosted on Hirify**. For those, use `vacancy reveal` and let the user apply
+  themselves.
 - `the application could not be sent right now.` means our side failed, not the user's data.
 
 ## Saved searches and delivery
 
 ```bash
 hirify feed create "<name>" [--filters '<json>'] [--telegram|--no-telegram] [--webhook <id>]
-hirify feed delivery <id> [--telegram|--no-telegram] [--webhook <id>|--no-webhook]
-hirify webhooks
-hirify webhooks create "<name>" <url>
+hirify feed deliver <id> [--telegram|--no-telegram] [--webhook <id>|--no-webhook]
+hirify webhook list
+hirify webhook create "<name>" <url>
 ```
 
 These change the user's account. Propose, get a yes, then run them.
@@ -161,13 +170,13 @@ These change the user's account. Propose, get a yes, then run them.
 `--filters` takes the same criteria the site's filter form produces, as JSON. Omitting it saves a
 feed with no criteria, which means "send me everything" and is legal.
 
-`webhooks create` answers with the endpoint and a **secret shown once**. Hand it to the user
+`webhook create` answers with the endpoint and a **secret shown once**. Hand it to the user
 immediately and tell them to store it: it signs every delivery and cannot be shown again.
 
-## Feedback
+## feedback send
 
 ```bash
-hirify feedback <bug|feature> "<title>" --body "<text>" [--vacancy <slug>]
+hirify feedback send <bug|feature> "<title>" --body "<text>" [--vacancy <slug>]
 ```
 
 Title 5 to 140 characters, body 10 to 5000. Ask the user before sending and send their words.
@@ -178,6 +187,35 @@ stop there.
 Refusals: too many reports in a short time (with the wait in seconds), the channel being off, or the
 report not being accepted.
 
+## api call: the raw door
+
+```bash
+hirify api call <path> [--method GET|POST|PUT|PATCH|DELETE] [--data '<json>']
+```
+
+Sends a request to the agent API as you write it and prints the answer as it comes back. It is here
+so that a job this CLI has no command for is a detour rather than a dead end.
+
+```bash
+hirify api call /agent/me
+hirify api call '/agent/vacancies?search=go&per_page=5'
+hirify api call /agent/feeds --data '{"name":"Senior Go","filters":{}}'
+hirify api call /agent/feeds/7/delivery --method PUT --data '{"notify_telegram":true}'
+```
+
+- The path is the one the API publishes and begins with `/agent/`. `agent/me` and `/api/agent/me`
+  are the same path written differently and all three arrive as one request.
+- `--data` makes the call a POST and travels as the JSON body. `--method` names any other method.
+  A method outside the five, or a `--data` that is not JSON, is refused before anything is sent.
+- The answer is printed as it arrived, refusals included, so what you parse is the server's own
+  payload rather than a sentence of ours. The status goes to stderr and the exit code is non-zero
+  when the server refused.
+
+**Prefer a named command where one exists.** This one carries none of what they know: it will not
+tell you that a call costs a reveal, and it will send a real application as readily as
+`vacancy apply` would. The permission rules do not change: ask the user before anything that sends,
+saves or configures.
+
 ## Failure modes worth knowing
 
 | Message | What it means | What to do |
@@ -186,9 +224,10 @@ report not being accepted.
 | `your sign-in is no longer valid` | the session expired past renewal | ask the user to run `hirify login` |
 | `the key was not accepted (401)` | a manual key was revoked or truncated | new key from the account page |
 | `no access (403)` | missing permission, or the plan does not cover agent access | sign in again, or check the plan |
-| `you have no reveals left right now` | the reveal budget is spent | reading still works; `hirify me` shows what is left |
+| `you have no reveals left right now` | the reveal budget is spent | reading still works; `hirify account show` has what is left |
 | `you have opened as many vacancies today...` | the day's vacancy opens are spent | feeds, search and anything already read today still work |
 | `too many requests in a short time` | asking faster than the API allows | wait the seconds it names, then carry on |
 | `something went wrong on our side` | our fault, not the request | retry in a minute |
 | an empty list from a filtered search | usually a criterion name or value that does not exist | check the name against what the server accepts, do not keep guessing |
 | `the network seems to be unavailable` | no connection | retry |
+| `hirify <noun> has no verb "..."` | a command name this CLI does not have | the message lists the verbs that noun takes; read it rather than guessing again |
