@@ -16,7 +16,8 @@
   "files": [
     "bin",
     "skills",
-    "README.md"
+    "README.md",
+    "NOTICE"
   ],
   "keywords": [
     "hirify",
@@ -35,5 +36,5 @@
   "bugs": {
     "url": "https://github.com/hirifyme/hirify-cli/issues"
   },
-  "license": "MIT"
+  "license": "Apache-2.0"
 }

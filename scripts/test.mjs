@@ -395,7 +395,7 @@ test('everything that ships is English', async () => {
   // published by accident, so it is checked rather than remembered.
   const { readFileSync, readdirSync } = await import('node:fs')
   const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-  const files = ['bin/hirify.js', 'README.md', 'package.json',
+  const files = ['bin/hirify.js', 'README.md', 'package.json', 'NOTICE',
     ...readdirSync(join(root, 'skills/hirify')).map((f) => `skills/hirify/${f}`)]
 
   for (const file of files) {
@@ -644,4 +644,16 @@ test('no shipped text states a length the server owns', async () => {
     const stated = text.match(/at most \d+ characters|between \d+ and \d+ characters|\d+ to \d+ characters/)
     assert.equal(stated, null, `${file} states a limit the server owns: ${stated?.[0]}`)
   }
+})
+
+test('the package ships the notice the licence obliges it to carry', async () => {
+  // npm puts LICENSE in the tarball on its own; NOTICE it does not, and Apache-2.0
+  // section 4(d) only reaches a redistributor if the file is actually in the package.
+  const { readFileSync } = await import('node:fs')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+
+  assert.equal(pkg.license, 'Apache-2.0')
+  assert.ok(pkg.files.includes('NOTICE'), 'NOTICE is not in the published files')
+  assert.match(readFileSync(join(root, 'NOTICE'), 'utf8'), /Copyright 2026 Hirify/)
 })
