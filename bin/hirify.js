@@ -756,6 +756,11 @@ async function cmdVacancySearch(args, words) {
   const p = new URLSearchParams()
 
   // The phrase first, so an explicit `--search` still wins if someone writes both.
+  //
+  // `search` and `per_page` are the only two parameter names this file is allowed to know,
+  // and they are structural rather than vocabulary: this command exists to put the words on
+  // `search`, and `--limit` has to land somewhere. Every other name belongs to the server
+  // and is fetched with `hirify filter guide`. Adding a third name here is the regression.
   const phrase = words.join(' ')
   if (phrase) p.set('search', phrase)
 

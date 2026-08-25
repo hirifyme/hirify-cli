@@ -618,7 +618,11 @@ test('nothing that ships names a search filter', async () => {
   ]
 
   // Names the server owns. `--grade senior` and friends lived in these texts for months.
-  const filters = /--(grade|work_format|remote_type|excluded_countries|english_level|employee_type|salary_from|salary_to|specializations|company_title|contact_types)\b/
+  //
+  // `search` and `per_page` are deliberately absent from this list. The CLI binds the phrase
+  // to `search` and `--limit` to `per_page`, so it has to know those two; they are how the
+  // command is wired, not a snapshot of a vocabulary. Nothing else gets that exemption.
+  const filters = /--(grade|work_format|remote_type|excluded_countries|english_level|employee_type|salary_from|salary_to|specializations|skills|excluded_skills|company_title|contact_types|period|macroregion|verified)\b/
   for (const text of texts) {
     const found = text.match(filters)
     assert.equal(found, null, `a filter name is written into a shipped text: ${found?.[0]}`)
