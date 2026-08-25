@@ -203,8 +203,8 @@ hirify api call /agent/feeds --data '{"name":"Senior Go","filters":{}}'
 hirify api call /agent/feeds/7/delivery --method PUT --data '{"notify_telegram":true}'
 ```
 
-- The path is the one the API publishes and begins with `/agent/`. `agent/me` and `/api/agent/me`
-  are the same path written differently and all three arrive as one request.
+- The path is the one the API publishes and begins with `/agent/`. `/agent/me`, `agent/me` and
+  `/api/agent/me` are one path written three ways and all arrive as the same request.
 - `--data` makes the call a POST and travels as the JSON body. `--method` names any other method.
   A method outside the five, or a `--data` that is not JSON, is refused before anything is sent.
 - The answer is printed as it arrived, refusals included, so what you parse is the server's own
