@@ -4,10 +4,16 @@
 // A thin client over `api.hirify.me/api/agent/*`, the same API the MCP server serves.
 // No dependencies: Node 18+ (built-in fetch), runs through `npx hirify`.
 //
-// Metering, same as on the server: lists and searches are free, reading one vacancy in
-// full spends 1 of the day's vacancy opens (an allowance shared with the site, and a
-// generous one), and revealing a contact spends 1 of the account's reveal allowance.
-// Repeating either on the same vacancy is free.
+// Metering, same as on the server: lists and searches are free, and three actions are
+// metered - reading a vacancy in full, revealing a contact, and applying. Repeating a read
+// or a reveal on the same vacancy is free. No number for any of them is written down in
+// this file: `hirify account show` reports what the server has left, and that is the only
+// place any of them is true.
+//
+// `quota.apply` is reported by the server but, as of 25.08, nothing on the server decrements
+// it (`DailyQuotaService::tryConsume` is wired to no caller on `origin/main`). So the texts
+// here say applying COUNTS AGAINST an allowance rather than that it spends one: the ceiling
+// is declared and published, and the day a gate lands the wording is already right.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -86,10 +92,11 @@ const HELP = `hirify - job search for AI agents
 
 Free: account show, feed list, feed show, vacancy search, profile list, webhook list,
 filter guide.
-vacancy read costs one of the day's vacancy opens, and the day is generous.
-vacancy reveal costs 1 reveal, the scarce one. Repeating either on the same vacancy is free.
-vacancy apply sends a real application to a recruiter. Ask the person first.
-What is left of both: hirify account show.
+Metered: vacancy read spends one of the day's vacancy opens, vacancy reveal spends 1 reveal,
+and vacancy apply counts against its own daily allowance. Repeating a read or a reveal on the
+same vacancy is free. vacancy apply also sends a real application to a recruiter and cannot be
+taken back, so ask the person first.
+What is left of each: hirify account show.
 
 New here: hirify intro
 A noun on its own lists its verbs: hirify vacancy
@@ -296,17 +303,28 @@ async function api(path, { method = 'GET', payload = null, allow = [], raw = fal
   if (res.status === 403) die('no access (403). This needs an active paid plan, or the sign-in is missing a permission.')
   if (res.status === 404) die('not found (404).')
   if (res.status === 429) {
-    // Three different walls answer 429: the reveal allowance is spent, the day's vacancy
-    // opens are spent, or the requests came too fast. The first two carry a quota block
-    // and say which one in `quota.action`. Naming the wrong wall leaves someone waiting
-    // out a limit they still have, or spending reveals they no longer do.
+    // Several walls answer 429: a metered action has run out, or the requests came too
+    // fast. The metered ones carry a quota block naming themselves in `quota.action`.
+    // Naming the wrong wall leaves someone waiting out a limit they still have, or
+    // spending reveals they no longer do.
     const spent = await res.json().catch(() => null)
     const wait = Number(res.headers.get('retry-after'))
-    if (spent?.quota?.action === 'vacancy_opens') {
+    const action = spent?.quota?.action
+    if (action === 'vacancy_opens') {
       die('you have opened as many vacancies today as the daily allowance covers.' +
         '\n        Feeds and search still work, and so does anything already read today.')
     }
-    if (spent?.quota) die('you have no reveals left right now. Reading still works.')
+    if (action === 'contact_reveals') die('you have no reveals left right now. Reading still works.')
+    if (action === 'apply') {
+      die('you have sent as many applications today as the daily allowance covers.' +
+        '\n        Reading and revealing still work. What is left: hirify account show')
+    }
+    // A budget we have no sentence for yet. Name the one the server named rather than
+    // guessing: guessing is how a spent read once came back as a spent reveal.
+    if (spent?.quota) {
+      die(`today's allowance for ${String(action ?? 'that action').replace(/_/g, ' ')} is used up.` +
+        '\n        What is left: hirify account show')
+    }
     die('too many requests in a short time.' +
       (Number.isFinite(wait) && wait > 0 ? ` Please try again in ${wait} seconds.` : ' Please try again in a minute.'))
   }
@@ -636,6 +654,10 @@ async function cmdAccountShow() {
   // Reading one vacancy in full has its own daily allowance, so it gets its own line.
   // Without it an agent planning a session can only find the wall by hitting it.
   const reads = count(d?.quota?.read?.remaining)
+  // So does applying, and this line was missing while the skill told agents that applying
+  // spends nothing. The server has reported `quota.apply` all along; dropping a budget the
+  // server publishes is the same error as inventing one, pointing the other way.
+  const applies = count(d?.quota?.apply?.remaining)
   const u = d?.usage?.reveal ?? {}
   // Whatever the server sent, and nothing else: a period it left out is simply not shown.
   const spent = [[u.today, 'today'], [u.last_7d, 'in 7d'], [u.last_30d, 'in 30d']]
@@ -647,6 +669,7 @@ async function cmdAccountShow() {
     // person has, so `N of M` would be inventing the M.
     console.log(`reveals: ${left === null ? '-' : `${left} left`}`)
     if (reads !== null) console.log(`opens:   ${reads} left today`)
+    if (applies !== null) console.log(`applies: ${applies} left today`)
     if (spent.length) console.log(`usage:   ${spent.join(' · ')}`)
   })
 }
@@ -1210,7 +1233,8 @@ What costs what
   nothing. Read as much as you need to.
   Revealing where to apply spends 1 reveal, and reveals are the scarce one. Protect that
   number: shortlist by reading, then reveal only the ones worth applying to.
-  hirify account show has both.
+  Applying has a daily allowance of its own. It is not the free step it looks like.
+  hirify account show has all three, and it is the only place they are current.
 
 Where to apply
     hirify vacancy reveal senior-go-engineer

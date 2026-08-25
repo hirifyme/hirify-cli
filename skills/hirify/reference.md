@@ -26,7 +26,7 @@ when you need to report a problem; the normal output never contains raw payloads
 | `account show`, `feed list`, `feed show`, `vacancy search`, `profile list`, `webhook list` | free: they spend nothing | reading only |
 | `vacancy read` | 1 vacancy open from a generous daily allowance, repeats the same day are free | reading only |
 | `vacancy reveal` | 1 reveal, repeats on the same vacancy are free | reading only |
-| `vacancy apply` | free | **no**: a real application reaches a real person |
+| `vacancy apply` | counts against a daily allowance of its own | **no**: a real application reaches a real person |
 | `feed create`, `feed deliver`, `webhook create` | free | changes the user's account |
 | `feedback send` | free | a ticket is filed |
 | `filter guide` | free: it spends nothing | reading only |
@@ -36,10 +36,16 @@ Free is not unlimited: every command is rate-limited, reading more loosely than 
 answers `429` and names the seconds to wait. The numbers are the server's and change without this
 file: `hirify account show --json`, block `limits`.
 
-Two budgets run out, and they are separate. Vacancy opens are the allowance `vacancy read` draws
+Three budgets run out, and they are separate. Vacancy opens are the allowance `vacancy read` draws
 on: it is shared with the site, so a vacancy the user opened in a browser today costs nothing here,
-and it is sized so that reading is not something to ration. Reveals are the scarce one. Both are in
-`hirify account show`, and in `hirify account show --json` under `quota.read` and `quota.reveal`.
+and it is sized so that reading is not something to ration. Reveals are the scarce one.
+Applications have a daily allowance of their own - `vacancy apply` is not the free step it looks
+like. All three are in `hirify account show`, and in `hirify account show --json` under
+`quota.read`, `quota.reveal` and `quota.apply`.
+
+**No number for any of them is written in this file.** Each block carries `limit`, `used` and
+`remaining` as the server currently has them; that is the only place they are true, and this file
+outlives every change to them.
 
 ## Signing in
 
@@ -61,9 +67,9 @@ hirify feed show <id> [--limit N] [--page N]
 hirify vacancy search "<phrase>" [--<criterion> <value>]... [--limit N] [--page N]
 ```
 
-`account show` reports the plan, the reveals left, the vacancy opens left today, and reveal usage
-over 7 and 30 days. Check it before spending reveals. Both allowances come as one number, not a
-fraction.
+`account show` reports the plan, the reveals left, the vacancy opens left today, the applications
+left today, and reveal usage over 7 and 30 days. Check it before spending any of the three. The
+allowances come as one number each, not as a fraction.
 
 `feed list` lists saved searches as `<id> <name>`, with `(off)` for an inactive one. `feed show
 <id>` returns that feed's vacancies, using the criteria saved in the feed.
@@ -166,7 +172,9 @@ hirify vacancy apply <slug> [--profile <id>] [--cover "<text>"]
 `profile list` lists what the user can apply with: `<profile_id> <name> [status · incomplete]`.
 
 `vacancy apply` sends an application through Hirify. **Ask the user first, every time, and show
-what you are sending.** It cannot be undone.
+what you are sending.** It cannot be undone, and it counts against a daily allowance of its own:
+`hirify account show` reports what is left, and `hirify account show --json` carries it as
+`quota.apply` with `limit`, `used` and `remaining` as the server currently has them.
 
 - `--profile` is required when the user has more than one profile. With exactly one, it is chosen
   automatically. Never guess between several.
@@ -254,6 +262,7 @@ saves or configures.
 | `the key was not accepted (401)` | a manual key was revoked or truncated | new key from the account page |
 | `no access (403)` | missing permission, or the plan does not cover agent access | sign in again, or check the plan |
 | `you have no reveals left right now` | the reveal budget is spent | reading still works; `hirify account show` has what is left |
+| `you have sent as many applications today...` | the daily allowance for applying is spent | reading and revealing still work; `hirify account show` has what is left |
 | `you have opened as many vacancies today...` | the day's vacancy opens are spent | feeds, search and anything already read today still work |
 | `too many requests in a short time` | asking faster than the API allows | wait the seconds it names, then carry on |
 | `something went wrong on our side` | our fault, not the request | retry in a minute |

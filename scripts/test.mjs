@@ -222,13 +222,14 @@ test('going too fast is told apart from running out', async () => {
 })
 
 // ── what the rest of the CLI now says ──────────────────────────────────────
-test('me shows the opens left next to the reveals left', async () => {
+test('me shows every budget the server reports', async () => {
   const { stdout } = await run(['account', 'show'], answer(200, {
     data: {
       plan: 'pro',
       quota: {
         reveal: { action: 'contact_reveals', used: 4, remaining: 26 },
         read: { action: 'vacancy_opens', limit: 1000, used: 2, remaining: 998 },
+        apply: { action: 'apply', limit: 30, used: 7, remaining: 23 },
       },
       usage: { reveal: { today: 4, last_7d: 11 } },
     },
@@ -237,7 +238,20 @@ test('me shows the opens left next to the reveals left', async () => {
   assert.match(stdout, /^plan: {4}pro$/m)
   assert.match(stdout, /^reveals: 26 left$/m)
   assert.match(stdout, /^opens: {3}998 left today$/m)
+  // Applying is metered and the server has always said so. Leaving this line out is how
+  // the skill came to tell agents that applying spends nothing.
+  assert.match(stdout, /^applies: 23 left today$/m)
   assert.match(stdout, /^usage: {3}4 today · 11 in 7d$/m)
+})
+
+test('a budget the server does not report is not invented', async () => {
+  const { stdout } = await run(['account', 'show'], answer(200, {
+    data: { plan: 'free', quota: { reveal: { remaining: 3 } } },
+  }))
+
+  assert.match(stdout, /^reveals: 3 left$/m)
+  assert.ok(!stdout.includes('applies:'), 'an absent budget gets no line')
+  assert.ok(!stdout.includes('opens:'), 'an absent budget gets no line')
 })
 
 test('a list points at reading one before revealing it', async () => {
@@ -660,4 +674,65 @@ test('the package ships the notice the licence obliges it to carry', async () =>
   assert.equal(pkg.license, 'Apache-2.0')
   assert.ok(pkg.files.includes('NOTICE'), 'NOTICE is not in the published files')
   assert.match(readFileSync(join(root, 'NOTICE'), 'utf8'), /Copyright 2026 Hirify/)
+})
+
+// ── 429: the wall that answered is the wall that is named ──────────────────
+test('the applications allowance running out is named as itself', async () => {
+  // It used to fall through to "you have no reveals left right now": the same defect the
+  // vacancy-opens branch was written to fix, one budget later.
+  const { code, stderr } = await run(['vacancy', 'apply', 'senior-go-engineer'], answer(429, {
+    error: true,
+    message: 'Rate limit exceeded.',
+    quota: { action: 'apply', limit: 30, used: 30, remaining: 0 },
+  }))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /you have sent as many applications today as the daily allowance covers/)
+  // It may say revealing still works - that is true and useful. What it must never do is
+  // report the reveal budget as the one that ran out.
+  assert.ok(!/no reveals left/.test(stderr), 'the reveal budget is a different wall')
+})
+
+test('a budget with no sentence of its own is still named, not guessed at', async () => {
+  const { code, stderr } = await run(['vacancy', 'read', 'senior-go-engineer'], answer(429, {
+    error: true,
+    quota: { action: 'some_future_budget', limit: 5, used: 5, remaining: 0 },
+  }))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /today's allowance for some future budget is used up/)
+  assert.ok(!stderr.includes('reveal'), 'an unknown budget is not reported as the reveal one')
+})
+
+test('nothing that ships calls applying free', async () => {
+  // config/agent.php declares a daily ceiling for `apply`, and GET /api/agent/me has
+  // reported `quota.apply` all along. Saying it spends nothing is false in the worst
+  // direction: an agent told a wall does not exist applies until it hits one.
+  const { readFileSync } = await import('node:fs')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const cli = readFileSync(join(root, 'bin/hirify.js'), 'utf8')
+  const texts = [
+    cli.slice(cli.indexOf('const HELP ='), cli.indexOf('// ── helpers')),
+    cli.slice(cli.indexOf('const INTRO ='), cli.indexOf('function cmdIntro')),
+    readFileSync(join(root, 'skills/hirify/SKILL.md'), 'utf8'),
+    readFileSync(join(root, 'skills/hirify/reference.md'), 'utf8'),
+  ]
+
+  for (const text of texts) {
+    assert.ok(!/`?vacancy apply`? (is )?(free|spends nothing)/.test(text), 'applying is called free')
+    assert.ok(!/\| `vacancy apply` \| free \|/.test(text), 'the cost table calls applying free')
+  }
+})
+
+test('no shipped text states what a budget is worth in numbers', async () => {
+  // The quotas move on the server, and the skill outlives every change to them.
+  const { readFileSync } = await import('node:fs')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const files = ['bin/hirify.js', 'skills/hirify/SKILL.md', 'skills/hirify/reference.md', 'README.md']
+
+  for (const file of files) {
+    const text = readFileSync(join(root, file), 'utf8')
+    const stated = text.match(/\d+ (reveals?|applications?|applies|vacancy opens?|opens?) (a|per) day|allowance of \d+|\d+ per day/i)
+    assert.equal(stated, null, `${file} puts a number on a budget: ${stated?.[0]}`)
+  }
 })

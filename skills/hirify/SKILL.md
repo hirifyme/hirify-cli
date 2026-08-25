@@ -37,16 +37,20 @@ will act on it without knowing.
 
 ## Two rules before anything else
 
-**Lists are free. Three commands are not, and they cost different things.**
+**Lists are free. Three commands are metered, and they spend different things.**
 
 - `vacancy read` spends one of the day's vacancy opens. The allowance is generous, it is the same
   one a browser uses, and re-reading a vacancy the same day costs nothing. Read freely.
 - `vacancy reveal` spends 1 reveal, and reveals are scarce. When they run out, reading still works.
-- `vacancy apply` spends nothing and cannot be taken back. It sends a real application, with the
-  user's name and profile, to a person who will read it.
+- `vacancy apply` counts against a daily allowance of its own **and cannot be taken back**. It
+  sends a real application, with the user's name and profile, to a person who will read it.
 
-How many of either are left is a number only the server has: `hirify account show`. Do not carry a
-figure from one answer into the next - both move while you work.
+**`hirify account show` is the only place any of these numbers is true.** Read it before you spend,
+and read it again rather than carrying a figure from one answer into the next: all three move while
+you work, and two of them are shared with what the user does on the site.
+
+Never tell the user how much of anything is left from memory, and never plan a batch on a number
+you are not currently looking at.
 
 **Ask the user before every apply, and before anything that changes their account.** Reading needs
 no permission. Sending, saving and configuring do.
@@ -114,6 +118,10 @@ Rules:
 
 - **Ask first, every time, and show what you are about to send.** An application cannot be taken
   back. Never apply to a list on a single "yes".
+- **Applying is metered.** The server declares a daily allowance for it and `hirify account show`
+  reports what is left, in the `applies` line. It is far smaller than the reading allowance, so
+  applying to everything that looks plausible spends it on the ones that were not worth it. Read
+  the line; do not assume the number, in either direction.
 - **Never invent the cover letter.** Draft it from what the user actually said about themselves and
   show them the draft. If they did not give you anything to work with, ask rather than fill the gap.
 - **Never choose the profile for them** when they have several. `hirify profile list` lists them.
@@ -158,9 +166,9 @@ tell the user what it says.
 - **No access** (403): the sign-in is missing an ability, or the plan does not cover agent access.
   Abilities are fixed when the user signs in and cannot be added afterwards, so a user who signed
   in before an ability existed has to sign in again. `hirify account show --json` reports the plan.
-- **A budget or the pace** (429): reveals spent, the day's vacancy opens spent, or commands sent
-  too fast. The message says which, and feeds and search keep working in all three. What is left:
-  `hirify account show`.
+- **A budget or the pace** (429): a metered action is used up - reveals, the day's vacancy opens,
+  or applications - or commands were sent too fast. The message names which one, and feeds and
+  search keep working in every case. What is left: `hirify account show`.
 - **A refusal on `vacancy apply`** is usually about the vacancy, not the user: archived, flagged,
   or hosted elsewhere. The server's own sentence comes through; pass it on as it is.
 - **A refusal naming a length or a value** comes from the server, not from the CLI. Do not argue
