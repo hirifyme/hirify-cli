@@ -13,7 +13,8 @@ when you need to report a problem; the normal output never contains raw payloads
 
 | Command | Cost | Reversible |
 |---|---|---|
-| `me`, `feeds`, `feed`, `search`, `profiles`, `webhooks` | free: they spend no reveals | reading only |
+| `me`, `feeds`, `feed`, `search`, `profiles`, `webhooks` | free: they spend nothing | reading only |
+| `read` | 1 vacancy open from a generous daily allowance, repeats the same day are free | reading only |
 | `reveal` | 1 reveal, repeats on the same vacancy are free | reading only |
 | `apply` | free | **no**: a real application reaches a real person |
 | `feed create`, `feed delivery`, `webhooks create` | free | changes the user's account |
@@ -23,7 +24,10 @@ Free is not unlimited. Every command is rate-limited per minute, `feed` and `sea
 than the rest, and `feedback` also per day. A burst answers `429`; wait the seconds it names and
 carry on. The current numbers come from the server: `hirify me --json`, block `limits`.
 
-Reveals are the only budget that runs out. When it does, reading still works.
+Two budgets run out, and they are separate. Vacancy opens are the allowance `read` draws on: it is
+shared with the site, so a vacancy the user opened in a browser today costs nothing here, and it is
+sized so that reading is not something to ration. Reveals are the scarce one. Both are in
+`hirify me`, and in `hirify me --json` under `quota.read` and `quota.reveal`.
 
 ## Signing in
 
@@ -45,8 +49,8 @@ hirify feed <id> [--limit N]
 hirify search "<query>" [--limit N] [--grade G]
 ```
 
-`me` reports the plan, the reveals left, and usage over 7 and 30 days. Check it before spending
-reveals. Reveals come as one number, not a fraction.
+`me` reports the plan, the reveals left, the vacancy opens left today, and reveal usage over 7 and
+30 days. Check it before spending reveals. Both allowances come as one number, not a fraction.
 
 `feeds` lists saved searches as `<id> <name>`, with `(off)` for an inactive one. `feed <id>` returns
 that feed's vacancies; `search` takes a free-text query.
@@ -62,6 +66,36 @@ Vacancy cards print as:
 Cards never carry contacts. `company hidden` means the name is revealed by `reveal`, not that the
 field is broken.
 
+## Read: one vacancy in full
+
+```bash
+hirify read <slug>
+```
+
+The card plus everything else the vacancy page shows: area, grade, skills, location, when it was
+posted, the page address, and the description as text. This is the command that decides fit, and it
+is deliberately cheap.
+
+It costs one vacancy open from the daily allowance, and the same vacancy read again the same day
+costs nothing. The allowance is shared with the site, so a vacancy the user already opened in a
+browser is already paid for. The output states whether an open was used and how many are left.
+
+The last line before that says which way to apply:
+
+- `Apply on Hirify: hirify apply <slug>` - the vacancy is hosted here.
+- `Where to apply: hirify reveal <slug> (uses 1 reveal)` - it came from elsewhere, so the user
+  applies themselves. Take this from `read` rather than finding out from a refusal on `apply`.
+
+Contacts, the apply destination and where the vacancy came from are never in this answer. That is
+what `reveal` is for.
+
+With `--json`, `data.description` is HTML (`data.description_format` says so) and the text output is
+the same content flattened for a terminal. `charged` and `quota` sit next to `data`.
+
+Refusals: `there is no vacancy with that slug.`, and, when the day's opens are spent, `you have
+opened as many vacancies today as the daily allowance covers.` - feeds and search still work then,
+and so does any vacancy already read today.
+
 ## Reveal: where to apply
 
 ```bash
@@ -73,7 +107,7 @@ contacts: an address, a form URL, or a link. Revealing the same vacancy again re
 and spends nothing, so a repeat is safe. The output states whether a reveal was used and how many
 are left.
 
-Shortlist by reading first. A reveal spent at random is spent.
+Shortlist with `read` first. A reveal spent at random is spent.
 
 ## Apply: only on Hirify
 
@@ -141,6 +175,7 @@ report not being accepted.
 | `the key was not accepted (401)` | a manual key was revoked or truncated | new key from the account page |
 | `no access (403)` | missing permission, or the plan does not cover agent access | sign in again, or check the plan |
 | `you have no reveals left right now` | the reveal budget is spent | reading still works; `hirify me` shows what is left |
+| `you have opened as many vacancies today...` | the day's vacancy opens are spent | feeds, search and anything already read today still work |
 | `too many requests in a short time` | asking faster than the API allows | wait the seconds it names, then carry on |
 | `something went wrong on our side` | our fault, not the request | retry in a minute |
 | `the network seems to be unavailable` | no connection | retry |

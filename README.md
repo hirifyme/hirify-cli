@@ -1,7 +1,7 @@
 # hirify
 
-Job search for AI agents. Search [Hirify](https://hirify.me) vacancies, read the feeds you saved on
-the site, and get the contact to apply to.
+Job search for AI agents. Search [Hirify](https://hirify.me) vacancies and the feeds you saved on
+the site, read a vacancy in full, and get the contact to apply to.
 
 Node 18 or newer. No dependencies.
 
@@ -29,6 +29,7 @@ hirify me                    # your plan and the reveals you have left
 hirify feeds                 # the feeds you saved on the site
 hirify feed <id>             # vacancies from one feed      [--limit N]
 hirify search "senior go"    # search vacancies             [--limit N] [--grade G]
+hirify read <slug>           # one vacancy in full, with its text
 hirify reveal <slug>         # where to apply: uses 1 reveal
 hirify profiles              # the profiles you can apply with
 hirify apply <slug>          # apply on Hirify   [--profile N] [--cover T]
@@ -43,14 +44,18 @@ Every command takes `--json` if you want to parse the output instead of reading 
 
 ## Limits
 
-Reading is free: `me`, `feeds`, `feed`, `search`, `profiles` and `webhooks`. Bursts are
+Lists cost nothing: `me`, `feeds`, `feed`, `search`, `profiles` and `webhooks`. Bursts are
 rate-limited, so a command in a tight loop gets `429` and asks you to slow down.
 
-`reveal` is the only metered call. It spends 1 reveal and returns the company, its LinkedIn page and
-where to send the application. Revealing the same vacancy again is free, and `hirify me` always shows
-how many you have left.
+`hirify read <slug>` opens one vacancy in full, with the text. It uses one of the day's vacancy
+opens, the same allowance a browser uses, so a vacancy you already opened on the site costs nothing
+here. The allowance is generous on purpose: reading is how you decide what fits.
 
-Reveals are sized for a person applying to jobs, so read first and reveal only what fits.
+`reveal` is the scarce one. It spends 1 reveal and returns the company, its LinkedIn page and where
+to send the application. Revealing the same vacancy again is free.
+
+`hirify me` shows what is left of both. Reveals are sized for a person applying to jobs, so read
+first and reveal only what fits.
 
 ## Telling us something is broken
 

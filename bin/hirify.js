@@ -4,8 +4,10 @@
 // A thin client over `api.hirify.me/api/agent/*`, the same API the MCP server serves.
 // No dependencies: Node 18+ (built-in fetch), runs through `npx hirify`.
 //
-// Metering, same as on the server: reading vacancies is free, revealing a contact spends
-// 1 of the account's reveal allowance, and revealing the same vacancy again is free.
+// Metering, same as on the server: lists and searches are free, reading one vacancy in
+// full spends 1 of the day's vacancy opens (an allowance shared with the site, and a
+// generous one), and revealing a contact spends 1 of the account's reveal allowance.
+// Repeating either on the same vacancy is free.
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -57,6 +59,7 @@ const HELP = `hirify - job search for AI agents
   hirify feeds                 the feeds you saved on the site
   hirify feed <id>             vacancies from one feed      [--limit N]
   hirify search <query>        search vacancies             [--limit N] [--grade G]
+  hirify read <slug>           one vacancy in full, with its text
   hirify reveal <slug>         where to apply: uses 1 reveal
   hirify profiles              the profiles you can apply with
 
@@ -71,10 +74,11 @@ const HELP = `hirify - job search for AI agents
 
   --json                       raw JSON instead of text
 
-Reading is free: me, feeds, feed, search, profiles, webhooks.
-Only reveal is metered, and revealing the same vacancy again is free.
+Free: me, feeds, feed, search, profiles, webhooks.
+read costs one of the day's vacancy opens, and the day is generous.
+reveal costs 1 reveal, the scarce one. Repeating either on the same vacancy is free.
 apply sends a real application to a recruiter. Ask the person first.
-hirify me shows how many reveals are left.
+hirify me shows what is left of both.
 
 Rules for your agent: npx skills add hirifyme/hirify-cli
 No browser (CI, servers): hirify auth <key>, or the HIRIFY_KEY variable.
@@ -231,11 +235,16 @@ async function api(path, { method = 'GET', payload = null, allow = [] } = {}) {
   if (res.status === 403) die('no access (403). This needs an active paid plan, or the sign-in is missing a permission.')
   if (res.status === 404) die('not found (404).')
   if (res.status === 429) {
-    // Two different walls answer 429: the reveal allowance is spent, or the requests came
-    // too fast. Only the first carries a quota block. Naming the wrong one leaves someone
-    // waiting out a limit they still have, or spending reveals they no longer do.
+    // Three different walls answer 429: the reveal allowance is spent, the day's vacancy
+    // opens are spent, or the requests came too fast. The first two carry a quota block
+    // and say which one in `quota.action`. Naming the wrong wall leaves someone waiting
+    // out a limit they still have, or spending reveals they no longer do.
     const spent = await res.json().catch(() => null)
     const wait = Number(res.headers.get('retry-after'))
+    if (spent?.quota?.action === 'vacancy_opens') {
+      die('you have opened as many vacancies today as the daily allowance covers.' +
+        '\n        Feeds and search still work, and so does anything already read today.')
+    }
     if (spent?.quota) die('you have no reveals left right now. Reading still works.')
     die('too many requests in a short time.' +
       (Number.isFinite(wait) && wait > 0 ? ` Please try again in ${wait} seconds.` : ' Please try again in a minute.'))
@@ -556,6 +565,9 @@ async function cmdMe() {
   const body = await api('/agent/me')
   const d = body?.data ?? {}
   const left = count(d?.quota?.reveal?.remaining)
+  // Reading one vacancy in full has its own daily allowance, so it gets its own line.
+  // Without it an agent planning a session can only find the wall by hitting it.
+  const reads = count(d?.quota?.read?.remaining)
   const u = d?.usage?.reveal ?? {}
   // Whatever the server sent, and nothing else: a period it left out is simply not shown.
   const spent = [[u.today, 'today'], [u.last_7d, 'in 7d'], [u.last_30d, 'in 30d']]
@@ -566,6 +578,7 @@ async function cmdMe() {
     // How many are left, and no denominator. Reveals are not a fraction of a number the
     // person has, so `N of M` would be inventing the M.
     console.log(`reveals: ${left === null ? '-' : `${left} left`}`)
+    if (reads !== null) console.log(`opens:   ${reads} left today`)
     if (spent.length) console.log(`usage:   ${spent.join(' · ')}`)
   })
 }
@@ -583,31 +596,41 @@ async function cmdFeeds() {
   })
 }
 
-// Fields come straight from the API's vacancy resource: a card carries no contacts by
-// design, and for premium companies the name arrives masked.
+/**
+ * The head of a vacancy, printed the same whether it comes from a list or from `read`.
+ * Fields come straight from the API's vacancy resource: a card carries no contacts by
+ * design, and for premium companies the name arrives masked.
+ *
+ * One function on purpose. A card that looks different depending on which command drew
+ * it is a card an agent has to learn twice.
+ */
+function vacancyHead(v) {
+  // `company_masked` is a FLAG meaning "the name is hidden until you reveal", not the
+  // name itself. It used to be printed as it came, and cards ended up saying "- true".
+  const company = v.company || (v.company_masked ? 'company hidden' : '-')
+  // Some of these arrive as arrays: live data has `work_format: []` next to
+  // `employee_type: ['employment']`. An empty array is truthy, so it used to survive
+  // the filter and print as a blank slot between two separators: "[usa ·  · b2]".
+  const label = (x) => (Array.isArray(x) ? x.filter(Boolean).join('/') : x)
+  const bits = [v.remote_type, v.work_format, v.employee_type, v.english_level].map(label).filter(Boolean)
+  if (v.salary && (v.salary.min || v.salary.max)) {
+    const { min, max, currency } = v.salary
+    bits.push([min, max].filter(Boolean).join('-') + (currency ? ` ${currency}` : ''))
+  }
+  if (v.verified) bits.push('verified')
+  // The slug is the handle every other command takes, so it leads the card. A card
+  // without one is still worth printing for its title, but the first line has to say
+  // that there is nothing to copy, not print the word `undefined` where a slug goes.
+  return `${v.slug ?? '-'}\n  ${v.title || '-'} · ${company}${bits.length ? `\n  [${bits.join(' · ')}]` : ''}`
+}
+
 function printVacancies(list, meta) {
   if (!list.length) return console.log('Nothing found.')
-  for (const v of list) {
-    // `company_masked` is a FLAG meaning "the name is hidden until you reveal", not the
-    // name itself. It used to be printed as it came, and cards ended up saying "- true".
-    const company = v.company || (v.company_masked ? 'company hidden' : '-')
-    // Some of these arrive as arrays: live data has `work_format: []` next to
-    // `employee_type: ['employment']`. An empty array is truthy, so it used to survive
-    // the filter and print as a blank slot between two separators: "[usa ·  · b2]".
-    const label = (x) => (Array.isArray(x) ? x.filter(Boolean).join('/') : x)
-    const bits = [v.remote_type, v.work_format, v.employee_type, v.english_level].map(label).filter(Boolean)
-    if (v.salary && (v.salary.min || v.salary.max)) {
-      const { min, max, currency } = v.salary
-      bits.push([min, max].filter(Boolean).join('-') + (currency ? ` ${currency}` : ''))
-    }
-    if (v.verified) bits.push('verified')
-    // The slug is the handle every other command takes, so it leads the card. A card
-    // without one is still worth printing for its title, but the first line has to say
-    // that there is nothing to copy, not print the word `undefined` where a slug goes.
-    console.log(`${v.slug ?? '-'}\n  ${v.title || '-'} · ${company}${bits.length ? `\n  [${bits.join(' · ')}]` : ''}`)
-  }
+  for (const v of list) console.log(vacancyHead(v))
   const total = meta?.total
-  console.log(`\nShowing ${list.length}${total ? ` of ${total}` : ''}. Where to apply: hirify reveal <slug> (uses 1 reveal).`)
+  // The order the product asks for: read what looks right, reveal only what fits.
+  console.log(`\nShowing ${list.length}${total ? ` of ${total}` : ''}. Read one: hirify read <slug>.` +
+    ' Where to apply: hirify reveal <slug> (uses 1 reveal).')
 }
 
 async function cmdFeed(args) {
@@ -636,6 +659,96 @@ async function cmdSearch(args) {
   const grade = flag(args, '--grade'); if (grade) p.set('grade', grade)
   const body = await api(`/agent/vacancies?${p}`)
   out(body, () => printVacancies(body?.data ?? [], body?.meta))
+}
+
+/**
+ * The description as the site shows it, turned into something a terminal can print. The
+ * API sends it as HTML (`description_format`), so the tags have to go somewhere: a block
+ * ends with a line break and a list item starts with a dash. Nothing is dropped or
+ * shortened here, and `--json` hands over the original untouched.
+ */
+function asText(html) {
+  return String(html)
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '- ')
+    .replace(/<\/(p|div|h[1-6]|li|tr|blockquote|ul|ol|table)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0?39;|&apos;/gi, "'")
+    // Last, or `&amp;lt;` would come out as `<` rather than as the `&lt;` somebody wrote.
+    .replace(/&amp;/gi, '&')
+    .replace(/[ \t]+$/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/** A timestamp as the day it names. The hour a vacancy was imported tells nobody anything. */
+const dateOnly = (v) => (typeof v === 'string' && v.length >= 10 ? v.slice(0, 10) : null)
+
+/**
+ * The rows under the head, each one printed only when the server sent something for it.
+ * They are collected rather than printed straight, so a vacancy that happens to carry
+ * none of them does not get a blank line standing in for the block.
+ */
+function detailRows(pairs) {
+  return pairs
+    .map(([label, value]) => [label, Array.isArray(value) ? value.filter(Boolean).join(' · ') : value])
+    .filter(([, text]) => text)
+    .map(([label, text]) => `${(label + ':').padEnd(10)}${text}`)
+}
+
+/**
+ * One vacancy in full, with the text a person reads on the site. This is the command an
+ * agent shortlists with, so it is deliberately the cheap one: it counts against the day's
+ * vacancy opens, which is a generous allowance, and not against the reveal budget.
+ *
+ * The same vacancy read twice in a day costs nothing the second time, and the allowance is
+ * shared with the site, so a vacancy opened in a browser is already paid for.
+ */
+async function cmdRead(args) {
+  const [slug] = positional(args)
+  if (!slug) die('a vacancy slug is required: hirify read <slug>  (slugs come from hirify search or hirify feed)')
+
+  const res = await api(`/agent/vacancies/${encodeURIComponent(slug)}`, { allow: [200, 404] })
+  if (res.status === 404) die('there is no vacancy with that slug.')
+
+  const d = res.body?.data ?? {}
+  // Codes, names and plain strings all arrive in these lists. English first: the rest of
+  // the output is English, and a card that switches language mid-way reads as a glitch.
+  const names = (list) => (Array.isArray(list) ? list.map((x) => x?.name_en || x?.name || x?.code || x).filter(Boolean) : [])
+
+  out(res.body, () => {
+    console.log(vacancyHead(d))
+
+    const rows = detailRows([
+      ['area', names(d.specializations)],
+      ['grade', names(d.grades)],
+      ['skills', names(d.skills)],
+      ['location', [...names(d.regions), ...names(d.cities)]],
+      ['posted', dateOnly(d.created_at)],
+      ['page', d.url],
+    ])
+    if (rows.length) console.log('\n' + rows.join('\n'))
+
+    const text = d.description ? asText(d.description) : ''
+    console.log(text ? `\n${text}\n` : '\nThis vacancy has no text on it.\n')
+
+    // Which of the two ways to apply this one takes, from the server's own flag. Guessing
+    // it from anything else is how a card came to promise an apply that answered 422.
+    console.log(d.can_apply_directly
+      ? `Apply on Hirify: hirify apply ${d.slug ?? slug}`
+      : `Where to apply: hirify reveal ${d.slug ?? slug} (uses 1 reveal)`)
+
+    console.log(res.body?.charged === false
+      ? '(no vacancy open used: this one was already opened today)'
+      : '(1 vacancy open used)')
+    const left = count(res.body?.quota?.remaining)
+    if (left !== null) console.log(`${left} ${left === 1 ? 'open' : 'opens'} left today`)
+  })
 }
 
 /**
@@ -935,7 +1048,7 @@ function cmdSkill() {
 const [cmd, ...args] = process.argv.slice(2)
 const routes = {
   login: cmdLogin, logout: cmdLogout, auth: cmdAuth,
-  me: cmdMe, feeds: cmdFeeds, feed: cmdFeed, search: cmdSearch, reveal: cmdReveal,
+  me: cmdMe, feeds: cmdFeeds, feed: cmdFeed, search: cmdSearch, read: cmdRead, reveal: cmdReveal,
   profiles: cmdProfiles, apply: cmdApply, webhooks: cmdWebhooks,
   feedback: cmdFeedback,
   skill: cmdSkill,
