@@ -54,6 +54,8 @@ const USER_AGENT = `hirify-cli/${VERSION}`
 
 const HELP = `hirify - job search for AI agents
 
+  hirify intro                 what this can do, and in what order
+
   hirify login                 sign in through your browser
   hirify me                    your plan and the reveals you have left
   hirify feeds                 the feeds you saved on the site
@@ -80,6 +82,7 @@ reveal costs 1 reveal, the scarce one. Repeating either on the same vacancy is f
 apply sends a real application to a recruiter. Ask the person first.
 hirify me shows what is left of both.
 
+New here: hirify intro
 Rules for your agent: npx skills add hirifyme/hirify-cli
 No browser (CI, servers): hirify auth <key>, or the HIRIFY_KEY variable.
 Key: hirify.me/account/api-access`
@@ -87,13 +90,27 @@ Key: hirify.me/account/api-access`
 // ── helpers ────────────────────────────────────────────────────────────────
 const die = (msg, code = 1) => { console.error(`hirify: ${msg}`); process.exit(code) }
 
-// Options that take a value. Needed by `positional` below: without knowing them we
-// cannot tell `--grade senior` (a filter) from `senior` (a search word).
-const VALUE_FLAGS = new Set(['--limit', '--grade', '--body', '--vacancy', '--profile', '--cover', '--filters', '--webhook'])
+// Options that stand on their own. Everything else takes the next word as its value, and
+// that rule is what lets `search` carry a filter the CLI has never heard of: the list of
+// filters lives on the server, and a CLI that keeps its own copy is a CLI that lags.
+//
+// It used to be the other way round, a list of options known to take a value. That list
+// was the ceiling: an option missing from it silently swallowed nothing and its value was
+// read as data.
+const BOOLEAN_FLAGS = new Set(['--json', '--no-browser', '--telegram', '--no-telegram', '--no-webhook'])
+
+// Ours, not the API's. These never reach a query string.
+const CLI_ONLY = new Set(['json'])
+
+/** Does this option take the word after it, or does it stand alone? */
+const takesValue = (args, i) =>
+  !BOOLEAN_FLAGS.has(args[i]) && args[i + 1] !== undefined && !args[i + 1].startsWith('--')
 
 const flag = (args, name) => {
   const i = args.indexOf(name)
-  return i === -1 ? null : args[i + 1]
+  if (i !== -1) return args[i + 1]
+  const eq = args.find((a) => a.startsWith(`${name}=`))
+  return eq === undefined ? null : eq.slice(name.length + 1)
 }
 
 /**
@@ -106,12 +123,33 @@ const positional = (args) => {
   const rest = []
   for (let i = 0; i < args.length; i++) {
     if (args[i].startsWith('--')) {
-      if (VALUE_FLAGS.has(args[i])) i++
+      if (takesValue(args, i)) i++
       continue
     }
     rest.push(args[i])
   }
   return rest
+}
+
+/**
+ * Every option and the value it was given, as a plain map. `search` forwards these to the
+ * API unchanged, so a filter added on the server works from the terminal the same day,
+ * without a new flag being written here.
+ *
+ * Both `--key value` and `--key=value` are the same thing. A key given more than once is
+ * joined with a comma, which is how the site sends a filter with several values.
+ */
+const options = (args) => {
+  const found = new Map()
+  for (let i = 0; i < args.length; i++) {
+    if (!args[i].startsWith('--')) continue
+    const eq = args[i].indexOf('=')
+    const name = eq === -1 ? args[i].slice(2) : args[i].slice(2, eq)
+    if (!name) continue
+    const value = eq !== -1 ? args[i].slice(eq + 1) : takesValue(args, i) ? args[++i] : 'true'
+    found.set(name, found.has(name) ? `${found.get(name)},${value}` : value)
+  }
+  return found
 }
 
 /**
@@ -627,10 +665,31 @@ function vacancyHead(v) {
 function printVacancies(list, meta) {
   if (!list.length) return console.log('Nothing found.')
   for (const v of list) console.log(vacancyHead(v))
-  const total = meta?.total
+
+  const page = count(meta?.page)
+  const perPage = count(meta?.per_page)
+  const lastPage = count(meta?.last_page)
+  const total = count(meta?.total)
+
+  // `of N` is printed only when N is larger than what came back, because only then is it a
+  // total and not a restatement of the page. The agent search endpoint currently answers
+  // with the size of the page it just returned, and "Showing 50 of 50" reads as "that is
+  // the whole board", which sends an agent away from vacancies that are there. The moment
+  // the server sends a real total, this prints it, with no change here.
+  const of = total !== null && total > list.length ? ` of ${total}` : ''
+  // `of L` once there is more than one page, on the last page too: "page 4 of 4" is how
+  // you know you have reached the end rather than lost the rest.
+  const where = page === null ? '' : `, page ${page}${lastPage !== null && lastPage > 1 ? ` of ${lastPage}` : ''}`
+  console.log(`\nShowing ${list.length}${of}${where}.`)
   // The order the product asks for: read what looks right, reveal only what fits.
-  console.log(`\nShowing ${list.length}${total ? ` of ${total}` : ''}. Read one: hirify read <slug>.` +
-    ' Where to apply: hirify reveal <slug> (uses 1 reveal).')
+  console.log('Read one: hirify read <slug>. Where to apply: hirify reveal <slug> (uses 1 reveal).')
+
+  // A full page is the only honest sign that there may be another one while `last_page`
+  // says otherwise. Offering the next page costs nothing if it turns out to be empty.
+  const more = lastPage !== null && page !== null && lastPage > page
+    ? true
+    : perPage !== null && list.length >= perPage
+  if (more && page !== null) console.log(`More: add --page ${page + 1}`)
 }
 
 async function cmdFeed(args) {
@@ -646,17 +705,42 @@ async function cmdFeed(args) {
 
   const id = rest[0]
   if (!id) die('a feed id is required: hirify feed <id>  (list them with hirify feeds)')
-  const limit = flag(args, '--limit')
-  const body = await api(`/agent/feeds/${encodeURIComponent(id)}/vacancies${limit ? `?per_page=${limit}` : ''}`)
+
+  // A feed already carries its own criteria, so only the two that say which slice of it to
+  // return travel from here. Without `--page` the second page of a feed was unreachable.
+  const p = new URLSearchParams()
+  const limit = flag(args, '--limit'); if (limit) p.set('per_page', limit)
+  const page = flag(args, '--page'); if (page) p.set('page', page)
+
+  const body = await api(`/agent/feeds/${encodeURIComponent(id)}/vacancies${p.size ? `?${p}` : ''}`)
   out(body, () => printVacancies(body?.data ?? [], body?.meta))
 }
 
+/**
+ * Search the board. The words are the phrase to look for; every option is passed on to the
+ * API as it was written.
+ *
+ * The CLI keeps no list of filters on purpose. The endpoint accepts the same criteria the
+ * site's own filter form produces, and the site can express all of them: a CLI that names
+ * them one flag at a time decides what is expressible, and it decided wrong for a long time
+ * (two flags against roughly thirty criteria). So `--grade senior` and `--excluded_countries
+ * ru` travel by the same rule, and a criterion added on the server works from here the day
+ * it ships. `hirify search --help` is not the vocabulary; the server publishes that.
+ */
 async function cmdSearch(args) {
-  const query = positional(args).join(' ')
   const p = new URLSearchParams()
-  if (query) p.set('search', query)
-  const limit = flag(args, '--limit'); if (limit) p.set('per_page', limit)
-  const grade = flag(args, '--grade'); if (grade) p.set('grade', grade)
+
+  // The phrase first, so an explicit `--search` still wins if someone writes both.
+  const words = positional(args).join(' ')
+  if (words) p.set('search', words)
+
+  for (const [name, value] of options(args)) {
+    if (CLI_ONLY.has(name)) continue
+    // `--limit` is what this CLI has always called it. The API calls it `per_page`, and
+    // that is the name the server publishes, so both arrive at the same parameter.
+    p.set(name === 'limit' ? 'per_page' : name, value)
+  }
+
   const body = await api(`/agent/vacancies?${p}`)
   out(body, () => printVacancies(body?.data ?? [], body?.meta))
 }
@@ -1038,6 +1122,96 @@ function cmdAuth(args) {
   console.log(`Key saved to ${AUTH_FILE}`)
 }
 
+/**
+ * The first command anyone runs, and the only long text the CLI carries. It is prose, not a
+ * list: `--help` already lists the commands, and a list does not tell you the order to use
+ * them in or which of them spends something.
+ *
+ * Written for two readers at once, because that is who is there: the agent doing the work,
+ * and the person watching it. Neither needs a different version of the truth.
+ *
+ * No network call. This has to work before anyone has signed in.
+ */
+const INTRO = `hirify - job search for AI agents
+
+Hirify is a job board. This CLI is how an agent works it for someone: the same vacancies, the
+same saved filters and the same account they have at hirify.me.
+
+Signing in
+  hirify login opens a browser and needs a person at the screen, so ask for it rather than
+  running it. On a server with no browser there is a key instead: hirify auth <key>, from
+  hirify.me/account/api-access.
+
+Start with what the account already has
+  Most people who use Hirify have saved a filter or two on the site. Those are feeds, and they
+  are the best place to start, because someone has already said in them what they want.
+
+    hirify me                    the plan, and both allowances
+    hirify feeds                 what this account has saved
+    hirify feed 31               the vacancies in one of them
+
+  When no feed fits, search the whole board. Search takes a phrase, and any criterion the
+  site's own filter form can express, written as an option:
+
+    hirify search "senior go"
+    hirify search "senior go" --grade senior --work_format remote
+    hirify search "senior go" --page 2
+
+  The criteria are the server's, not this CLI's, so there is no list of them here to fall
+  behind. An option is sent on under the name you gave it; give one twice and the values are
+  joined, the way the site sends a filter with several values.
+
+Read before you spend anything
+  A card is a headline: title, company, terms. Fit is decided in the text.
+
+    hirify read senior-go-engineer
+
+  This prints the whole vacancy, and it also says which of the two ways to apply this one
+  takes, so you do not have to work that out or find out from a refusal.
+
+What costs what
+  Lists and searches are free.
+  Reading one vacancy in full spends one of the day's vacancy opens. There are many of them,
+  they are the same ones a browser spends, and reading a vacancy again the same day costs
+  nothing. Read as much as you need to.
+  Revealing where to apply spends 1 reveal, and reveals are the scarce one. Protect that
+  number: shortlist by reading, then reveal only the ones worth applying to.
+  hirify me shows both.
+
+Where to apply
+    hirify reveal senior-go-engineer
+
+  Gives the company, its LinkedIn page when we know it, and the address to send the
+  application to. Revealing the same vacancy again returns the same thing and costs nothing.
+
+Applying
+  Most vacancies here came from somewhere else: company pages, Telegram channels, other
+  boards. For those, reveal brings back the address and the person applies themselves.
+  Vacancies hosted on Hirify can be applied to from here:
+
+    hirify profiles
+    hirify apply senior-go-engineer --profile 4 --cover "..."
+
+  An application reaches a real person and cannot be recalled. Ask first, every time, and
+  show what you are about to send. Nothing follows up afterwards: the recruiter replies
+  where they choose to.
+
+Two more things
+  A saved search can be created from here and delivered to Telegram or to a server of yours:
+  hirify feed create, hirify feed delivery, hirify webhooks.
+  Something broken or missing: hirify feedback bug "<title>" --body "<what happened>". It
+  reaches the team and costs nothing.
+
+If you are an agent
+  Install the working rules once: npx skills add hirifyme/hirify-cli. They cover the order
+  above, what needs the person's permission before you do it, and what each refusal means.
+
+Every command takes --json. The full list of them: hirify --help`
+
+function cmdIntro() {
+  console.log(INTRO)
+}
+
 /** The skill ships through skills.sh now: one command installs it into every harness. */
 function cmdSkill() {
   console.log('The rules for your agent install with one command:\n\n  npx skills add hirifyme/hirify-cli\n')
@@ -1051,7 +1225,7 @@ const routes = {
   me: cmdMe, feeds: cmdFeeds, feed: cmdFeed, search: cmdSearch, read: cmdRead, reveal: cmdReveal,
   profiles: cmdProfiles, apply: cmdApply, webhooks: cmdWebhooks,
   feedback: cmdFeedback,
-  skill: cmdSkill,
+  intro: cmdIntro, skill: cmdSkill,
 }
 
 if (!cmd || cmd === '--help' || cmd === '-h' || cmd === 'help') { console.log(HELP); process.exit(0) }

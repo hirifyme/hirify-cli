@@ -230,11 +230,165 @@ test('me shows the opens left next to the reveals left', async () => {
 test('a list points at reading one before revealing it', async () => {
   const { stdout } = await run(['search', 'go'], answer(200, {
     data: [VACANCY],
-    meta: { total: 1 },
+    meta: { page: 1, per_page: 20, total: 1, last_page: 1 },
   }))
 
   assert.match(stdout, /^senior-go-engineer\n {2}Senior Go Engineer · Acme$/m)
   assert.match(stdout, /Read one: hirify read <slug>\. Where to apply: hirify reveal <slug> \(uses 1 reveal\)\./)
+})
+
+// ── search as a conduit ────────────────────────────────────────────────────
+// The endpoint takes the same criteria the site's filter form produces. The CLI must not
+// be the thing that decides which of them are expressible.
+test('any option is passed on to the API under the name it was given', async () => {
+  const { seen } = await run(
+    ['search', 'senior', 'go', '--grade', 'senior', '--work_format', 'remote', '--excluded_countries', 'ru'],
+    answer(200, { data: [], meta: {} }),
+  )
+
+  const q = new URLSearchParams(seen[0].split('?')[1])
+  assert.equal(q.get('search'), 'senior go')
+  assert.equal(q.get('grade'), 'senior')
+  assert.equal(q.get('work_format'), 'remote')
+  assert.equal(q.get('excluded_countries'), 'ru')
+})
+
+test('an option nobody has ever written a flag for still reaches the API', async () => {
+  const { seen } = await run(
+    ['search', '--a_filter_invented_after_this_test', 'yes', '--another=42'],
+    answer(200, { data: [], meta: {} }),
+  )
+
+  const q = new URLSearchParams(seen[0].split('?')[1])
+  assert.equal(q.get('a_filter_invented_after_this_test'), 'yes')
+  assert.equal(q.get('another'), '42')
+})
+
+test('the same option twice is joined the way the site sends a multi-value filter', async () => {
+  const { seen } = await run(
+    ['search', '--grade', 'senior', '--grade', 'middle'],
+    answer(200, { data: [], meta: {} }),
+  )
+
+  assert.equal(new URLSearchParams(seen[0].split('?')[1]).get('grade'), 'senior,middle')
+})
+
+test('--limit still works and arrives under the name the server publishes', async () => {
+  const { seen } = await run(['search', 'go', '--limit', '5'], answer(200, { data: [], meta: {} }))
+
+  const q = new URLSearchParams(seen[0].split('?')[1])
+  assert.equal(q.get('per_page'), '5')
+  assert.equal(q.get('limit'), null, 'the CLI name does not leak into the request')
+})
+
+test('--json steers the CLI and is never sent as a filter', async () => {
+  const { seen, stdout } = await run(['search', 'go', '--json'], answer(200, { data: [], meta: {} }))
+
+  assert.equal(new URLSearchParams(seen[0].split('?')[1]).get('json'), null)
+  assert.equal(new URLSearchParams(seen[0].split('?')[1]).get('search'), 'go')
+  assert.deepEqual(JSON.parse(stdout), { data: [], meta: {} })
+})
+
+test('a flag before the words does not eat one of them', async () => {
+  const { seen } = await run(['search', '--json', 'senior', 'go'], answer(200, { data: [], meta: {} }))
+
+  assert.equal(new URLSearchParams(seen[0].split('?')[1]).get('search'), 'senior go')
+})
+
+// ── paging ─────────────────────────────────────────────────────────────────
+test('search takes a page', async () => {
+  const { seen } = await run(['search', 'go', '--page', '3'], answer(200, { data: [], meta: {} }))
+
+  assert.equal(new URLSearchParams(seen[0].split('?')[1]).get('page'), '3')
+})
+
+test('feed takes a page and a limit', async () => {
+  const { seen } = await run(['feed', '31', '--page', '2', '--limit', '5'], answer(200, { data: [], meta: {} }))
+
+  assert.equal(seen[0].split('?')[0], '/api/agent/feeds/31/vacancies')
+  const q = new URLSearchParams(seen[0].split('?')[1])
+  assert.equal(q.get('page'), '2')
+  assert.equal(q.get('per_page'), '5')
+})
+
+test('feed with no options asks for the feed and nothing else', async () => {
+  const { seen } = await run(['feed', '31'], answer(200, { data: [], meta: {} }))
+
+  assert.deepEqual(seen, ['/api/agent/feeds/31/vacancies'])
+})
+
+test('the page and the next one are named, and a full page offers the next', async () => {
+  const { stdout } = await run(['search', 'go'], answer(200, {
+    data: [VACANCY, { ...VACANCY, slug: 'b' }],
+    meta: { page: 2, per_page: 2, total: 2, last_page: 1 },
+  }))
+
+  assert.match(stdout, /^Showing 2, page 2\.$/m)
+  assert.match(stdout, /^More: add --page 3$/m)
+})
+
+test('a total is printed only when it is a total and not the size of the page', async () => {
+  // What the agent search endpoint answers today: total equal to what it just returned.
+  // "Showing 2 of 2" would read as "that is the whole board" and it is not.
+  const clamped = await run(['search', 'go'], answer(200, {
+    data: [VACANCY, { ...VACANCY, slug: 'b' }],
+    meta: { page: 1, per_page: 2, total: 2, last_page: 1 },
+  }))
+  assert.match(clamped.stdout, /^Showing 2, page 1\.$/m)
+
+  // What it answers once the server counts properly: printed with no change here.
+  const real = await run(['search', 'go'], answer(200, {
+    data: [VACANCY, { ...VACANCY, slug: 'b' }],
+    meta: { page: 1, per_page: 2, total: 1665, last_page: 833 },
+  }))
+  assert.match(real.stdout, /^Showing 2 of 1665, page 1 of 833\.$/m)
+  assert.match(real.stdout, /^More: add --page 2$/m)
+})
+
+test('the last page does not offer another one', async () => {
+  const { stdout } = await run(['search', 'go'], answer(200, {
+    data: [VACANCY],
+    meta: { page: 4, per_page: 20, total: 61, last_page: 4 },
+  }))
+
+  assert.match(stdout, /^Showing 1 of 61, page 4 of 4\.$/m)
+  assert.ok(!stdout.includes('More: add --page'), 'there is no page 5 to offer')
+})
+
+// ── intro ──────────────────────────────────────────────────────────────────
+test('intro explains the work and asks nothing of the network', async () => {
+  const { code, stdout, seen } = await run(['intro'], answer(200, {}))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, [], 'intro runs before anyone has signed in')
+  for (const topic of [/hirify feeds/, /hirify search/, /hirify read/, /hirify reveal/, /hirify apply/, /hirify login/]) {
+    assert.match(stdout, topic)
+  }
+  assert.match(stdout, /Reading one vacancy in full spends one of the day's vacancy opens/)
+  assert.match(stdout, /cannot be recalled/)
+})
+
+test('intro is reachable from the help', async () => {
+  const { stdout } = await run(['--help'], answer(200, {}))
+
+  assert.match(stdout, /hirify intro +what this can do, and in what order/)
+})
+
+test('everything that ships is English', async () => {
+  // The package goes to npm and skills.sh. Russian in it reads as an internal file
+  // published by accident, so it is checked rather than remembered.
+  const { readFileSync, readdirSync } = await import('node:fs')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const files = ['bin/hirify.js', 'README.md', 'package.json',
+    ...readdirSync(join(root, 'skills/hirify')).map((f) => `skills/hirify/${f}`)]
+
+  for (const file of files) {
+    const text = readFileSync(join(root, file), 'utf8')
+    const cyrillic = text.match(/[\u0400-\u04FF]+/g)
+    assert.equal(cyrillic, null, `${file} carries Russian: ${cyrillic?.slice(0, 3).join(', ')}`)
+    const dashes = text.match(/[\u2014\u2013]/g)
+    assert.equal(dashes, null, `${file} carries a long dash`)
+  }
 })
 
 test('read is in the help', async () => {

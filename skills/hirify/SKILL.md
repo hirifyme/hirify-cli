@@ -5,8 +5,9 @@ description: Job search through Hirify - vacancies from the user's saved feeds, 
 
 # Hirify job search
 
-You work with the Hirify job board through the `hirify` CLI. Full command reference, with every
-option and every answer: `reference.md`, next to this file. Read it when you need the detail.
+You work with the Hirify job board through the `hirify` CLI. `hirify intro` is its own guide, and
+`reference.md` next to this file has every command, what it costs and how it refuses. Read that
+when you need the detail.
 
 ## Two rules before anything else
 
@@ -28,7 +29,7 @@ no permission. Sending, saving and configuring do.
 hirify me                       # plan and remaining reveals: start here
 hirify feeds                    # the user's saved feeds, which are their own filters
 hirify feed <id>                # vacancies from a feed: the best source
-hirify search "senior go"       # when no feed fits
+hirify search "senior go"       # when no feed fits, plus any filter the site can express
 hirify read <slug>              # the whole vacancy, with its text: this is how you judge fit
 hirify reveal <slug>            # where to apply: spends 1 reveal
 hirify apply <slug>             # apply on Hirify: ask first
@@ -44,6 +45,22 @@ hirify apply <slug>             # apply on Hirify: ask first
 
 `hirify read` also answers which of the two ways to apply the vacancy takes, so you do not have to
 work it out or find out from a refusal.
+
+## Searching
+
+`search` is a conduit to the API, not a fixed set of flags. It takes a phrase, and any criterion
+the site's own filter form can express, written as an option and passed on under that name:
+
+```bash
+hirify search "senior go" --grade senior --work_format remote
+hirify search "senior go" --excluded_countries ru --page 2
+hirify search "senior go" --grade senior --grade middle    # one criterion, two values
+```
+
+**Do not guess criterion names or their values.** Ask the server what it accepts rather than
+trying options until one works: an unknown criterion is not refused, it simply narrows nothing,
+and a misspelt value quietly returns an empty list. `--limit N` sets the page size and `--page N`
+moves through the pages.
 
 ## Applying
 

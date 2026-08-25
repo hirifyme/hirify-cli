@@ -45,15 +45,27 @@ again.
 ```bash
 hirify me
 hirify feeds
-hirify feed <id> [--limit N]
-hirify search "<query>" [--limit N] [--grade G]
+hirify feed <id> [--limit N] [--page N]
+hirify search "<phrase>" [--<criterion> <value>]... [--limit N] [--page N]
 ```
 
 `me` reports the plan, the reveals left, the vacancy opens left today, and reveal usage over 7 and
 30 days. Check it before spending reveals. Both allowances come as one number, not a fraction.
 
 `feeds` lists saved searches as `<id> <name>`, with `(off)` for an inactive one. `feed <id>` returns
-that feed's vacancies; `search` takes a free-text query.
+that feed's vacancies, using the criteria saved in the feed.
+
+`search` is a conduit. The words are the phrase; every option is forwarded to the API under the
+name you gave it, so the criteria are the server's and this CLI holds no copy of them to fall
+behind. `--limit` is the page size and arrives as the API's `per_page`; `--json` steers the CLI and
+is never sent. An option repeated is joined with a comma, which is how the site sends a criterion
+with several values.
+
+Do not guess names or values. An unknown criterion is not refused, it narrows nothing, and a
+misspelt value returns an empty list that looks like an honest answer.
+
+Both `feed` and `search` page with `--page N`. The last line of a list says which page you are on
+and offers the next one when there may be another.
 
 Vacancy cards print as:
 
@@ -178,4 +190,5 @@ report not being accepted.
 | `you have opened as many vacancies today...` | the day's vacancy opens are spent | feeds, search and anything already read today still work |
 | `too many requests in a short time` | asking faster than the API allows | wait the seconds it names, then carry on |
 | `something went wrong on our side` | our fault, not the request | retry in a minute |
+| an empty list from a filtered search | usually a criterion name or value that does not exist | check the name against what the server accepts, do not keep guessing |
 | `the network seems to be unavailable` | no connection | retry |
