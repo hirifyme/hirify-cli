@@ -24,6 +24,11 @@ import { spawn } from 'node:child_process'
 import { randomBytes, createHash } from 'node:crypto'
 
 const API = process.env.HIRIFY_API || 'https://api.hirify.me'
+// The two public well-known documents the CLI is allowed to hardcode. OAuth discovery is
+// unchanged; the Hirify agent document is where the CLI learns the manifest URL, so it never
+// has to hardcode an agent operation path of its own.
+const OAUTH_WELL_KNOWN = '/.well-known/oauth-authorization-server'
+const AGENT_WELL_KNOWN = '/.well-known/hirify-agent'
 const CONFIG_DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'hirify')
 // One file for either way of signing in. Working out where the current token came from
 // is cheaper from a single `kind` field than from two files that may both exist.
@@ -86,7 +91,7 @@ const HELP = `hirify - job search for AI agents
 
   hirify filter guide             what search can filter on, from the server
   hirify feedback send <kind>     report a bug or ask for a feature
-  hirify api call <path>          any agent API path, raw   [--method M] [--data JSON]
+  hirify api call <capability>    invoke any capability, raw   [--data JSON]
 
   --json                          raw JSON instead of text
 
@@ -242,11 +247,14 @@ async function accessToken() {
 }
 
 // ── talking to the API ─────────────────────────────────────────────────────
+// `path` is a whole path under the API base, the way the manifest writes it
+// (`/api/agent/...`). The CLI does not assemble it from parts of its own, so a path the
+// server moves is followed from the manifest without a change here.
 async function request(path, method, token, payload) {
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': USER_AGENT }
   if (payload) headers['Content-Type'] = 'application/json'
   try {
-    return await fetch(`${API}/api${path}`, {
+    return await fetch(`${API}${path}`, {
       method,
       headers,
       body: payload ? JSON.stringify(payload) : undefined,
@@ -345,6 +353,156 @@ async function api(path, { method = 'GET', payload = null, allow = [], raw = fal
   return body
 }
 
+// ── the capability manifest ─────────────────────────────────────────────────
+// The version of the manifest this CLI can read. A server that answers with a higher one
+// speaks a document this build cannot interpret safely, and the CLI says so rather than
+// guessing. Lower or equal is fine: unknown fields are ignored, not refused.
+const SUPPORTED_SCHEMA_VERSION = 1
+// A dedicated, stable exit code for exactly that: the server's manifest is newer than this
+// CLI. Kept apart from the ordinary error exit so a caller can tell "update the CLI" from
+// "the command failed".
+const EXIT_MANIFEST_UNSUPPORTED = 2
+
+/**
+ * Where the manifest lives, learned from the public Hirify agent document rather than
+ * hardcoded. The CLI is allowed to know the well-known path and nothing past it, so the
+ * address of every operation stays the server's to move.
+ *
+ * Cached for the process: the document does not change under one command.
+ */
+let agentDiscoveryCache = null
+async function agentDiscovery() {
+  if (agentDiscoveryCache) return agentDiscoveryCache
+  try {
+    const res = await fetch(`${API}${AGENT_WELL_KNOWN}`, { headers: { Accept: 'application/json' } })
+    if (!res.ok) return (agentDiscoveryCache = { manifest_url: null })
+    const doc = await res.json()
+    agentDiscoveryCache = {
+      manifest_url: typeof doc.manifest_url === 'string' && doc.manifest_url ? doc.manifest_url : null,
+    }
+  } catch {
+    // Unreachable is the same fact as unusable to the caller: no manifest, so no operations.
+    agentDiscoveryCache = { manifest_url: null }
+  }
+  return agentDiscoveryCache
+}
+
+// The manifest, held for this process only and never written to disk, so a fresh run always
+// starts from the server's current document. `etag` rides along so a later fetch in the same
+// process can revalidate instead of downloading the whole thing again.
+let manifestCache = null
+
+/**
+ * Fetch and validate the manifest once per process. The first call downloads and checks it;
+ * a later call in the same process sends the stored ETag and reuses the cache on a 304, so
+ * the document is parsed and validated once even if it is asked for again.
+ */
+async function loadManifest() {
+  const { manifest_url } = await agentDiscovery()
+  if (!manifest_url) {
+    die('could not reach Hirify to load what it can do. Please check your connection and try again.')
+  }
+
+  const headers = {
+    Authorization: `Bearer ${await accessToken()}`,
+    Accept: 'application/json',
+    'User-Agent': USER_AGENT,
+  }
+  if (manifestCache?.etag) headers['If-None-Match'] = manifestCache.etag
+
+  let res
+  try {
+    res = await fetch(manifest_url, { headers })
+  } catch (e) {
+    if (manifestCache) return manifestCache.doc
+    die(`the network seems to be unavailable: ${e.message}`)
+  }
+
+  // The manifest is behind the sign-in, so a rotated access token answers 401 once. One
+  // quiet exchange and a retry, the same as an ordinary request.
+  if (res.status === 401 && !process.env.HIRIFY_KEY) {
+    const session = readSession()
+    if (session?.kind === 'oauth' && session.refresh_token) {
+      headers.Authorization = `Bearer ${(await refreshSession(session)).access_token}`
+      try {
+        res = await fetch(manifest_url, { headers })
+      } catch (e) {
+        die(`the network seems to be unavailable: ${e.message}`)
+      }
+    }
+  }
+
+  if (res.status === 304 && manifestCache) return manifestCache.doc
+  if (res.status === 401) {
+    die(process.env.HIRIFY_KEY || readSession()?.kind === 'key'
+      ? 'the key was not accepted (401). It may have been revoked, or copied incompletely.'
+      : 'your sign-in is no longer valid. Please run `hirify login` again.')
+  }
+  if (!res.ok) die('could not load what Hirify can do right now. Please try again in a minute.')
+
+  const doc = await res.json().catch(() => null)
+  validateManifest(doc)
+  manifestCache = { doc, etag: res.headers.get('etag') || null }
+  return doc
+}
+
+/** Refuse a manifest this build cannot read, and say which way to fix it. */
+function validateManifest(doc) {
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+    die('Hirify sent something this CLI could not read as a manifest. Please try again in a minute.')
+  }
+  const version = doc.schema_version
+  if (typeof version !== 'number' || !Number.isFinite(version)) {
+    die('Hirify sent a manifest without a version. Please try again in a minute.')
+  }
+  if (version > SUPPORTED_SCHEMA_VERSION) {
+    die('this Hirify speaks a newer manifest than this CLI can read' +
+      ` (its version is ${version}, this CLI reads ${SUPPORTED_SCHEMA_VERSION}).` +
+      '\n        Please update the CLI: npm install -g hirify, or run it with npx hirify.',
+      EXIT_MANIFEST_UNSUPPORTED)
+  }
+  if (!Array.isArray(doc.capabilities)) {
+    die('Hirify sent a manifest with no list of what it can do. Please try again in a minute.')
+  }
+}
+
+/**
+ * Find one capability by its stable id. This is how a command reaches the server: it names
+ * the capability it wants, and the manifest says which method and path answer it today.
+ */
+async function resolveCapability(id) {
+  const manifest = await loadManifest()
+  const cap = manifest.capabilities.find((c) => c && c.id === id)
+  if (!cap || typeof cap.method !== 'string' || typeof cap.path !== 'string') {
+    die(`this Hirify does not offer "${id}". It may be an older server, or the operation has moved.`)
+  }
+  return cap
+}
+
+/** Put values into a path template: `/api/agent/vacancies/{slug}` plus `{slug}` -> a path. */
+function fillPath(template, params = {}) {
+  return template.replace(/\{([a-z_]+)\}/g, (_, name) => {
+    const value = params[name]
+    if (value === undefined || value === null) {
+      die(`this call needs "${name}", and it was not given.`)
+    }
+    return encodeURIComponent(String(value))
+  })
+}
+
+/**
+ * Call a capability by its id. The command supplies the parts it owns - the path values, the
+ * query, the body - and the manifest supplies the method and the path, so no route is written
+ * into this file.
+ */
+async function callCapability(id, { params = {}, query = null, payload = null, allow = [], raw = false } = {}) {
+  const cap = await resolveCapability(id)
+  let path = fillPath(cap.path, params)
+  const qs = query ? query.toString() : ''
+  if (qs) path += `?${qs}`
+  return api(path, { method: cap.method, payload, allow, raw })
+}
+
 // ── signing in through the browser ─────────────────────────────────────────
 /**
  * Where the authorization server lives. We ask it rather than hardcode it (RFC 8414),
@@ -358,7 +516,7 @@ async function discover() {
     scopes: FALLBACK_SCOPES,
   }
   try {
-    const res = await fetch(`${API}/.well-known/oauth-authorization-server`, { headers: { Accept: 'application/json' } })
+    const res = await fetch(`${API}${OAUTH_WELL_KNOWN}`, { headers: { Accept: 'application/json' } })
     if (!res.ok) return fallback
     const meta = await res.json()
     // The abilities are the server's to name. We ask for every one it publishes, because
@@ -648,7 +806,7 @@ function cmdLogout() {
 
 // ── commands ───────────────────────────────────────────────────────────────
 async function cmdAccountShow() {
-  const body = await api('/agent/me')
+  const body = await callCapability('account.status')
   const d = body?.data ?? {}
   const left = count(d?.quota?.reveal?.remaining)
   // Reading one vacancy in full has its own daily allowance, so it gets its own line.
@@ -675,7 +833,7 @@ async function cmdAccountShow() {
 }
 
 async function cmdFeedList() {
-  const body = await api('/agent/feeds')
+  const body = await callCapability('feeds.list')
   const list = body?.data ?? []
   out(body, () => {
     if (!list.length) return console.log('You have no feeds yet. Save a filter on hirify.me and it becomes a feed.')
@@ -757,7 +915,7 @@ async function cmdFeedShow(args, words) {
   const limit = flag(args, '--limit'); if (limit) p.set('per_page', limit)
   const page = flag(args, '--page'); if (page) p.set('page', page)
 
-  const body = await api(`/agent/feeds/${encodeURIComponent(id)}/vacancies${p.size ? `?${p}` : ''}`)
+  const body = await callCapability('feeds.vacancies', { params: { feed_id: id }, query: p })
   out(body, () => printVacancies(body?.data ?? [], body?.meta))
 }
 
@@ -794,7 +952,7 @@ async function cmdVacancySearch(args, words) {
     p.set(name === 'limit' ? 'per_page' : name, value)
   }
 
-  const body = await api(`/agent/vacancies?${p}`)
+  const body = await callCapability('vacancies.search', { query: p })
   out(body, () => printVacancies(body?.data ?? [], body?.meta))
 }
 
@@ -853,7 +1011,7 @@ async function cmdVacancyRead(args, words) {
       '\n        Slugs come from hirify vacancy search or hirify feed show.')
   }
 
-  const res = await api(`/agent/vacancies/${encodeURIComponent(slug)}`, { allow: [200, 404] })
+  const res = await callCapability('vacancies.read', { params: { slug }, allow: [200, 404] })
   if (res.status === 404) die('there is no vacancy with that slug.')
 
   const d = res.body?.data ?? {}
@@ -906,7 +1064,7 @@ function contactLine(c) {
 async function cmdVacancyReveal(args, words) {
   const [slug] = words
   if (!slug) die('a vacancy slug is required: hirify vacancy reveal <slug>')
-  const body = await api(`/agent/vacancies/${encodeURIComponent(slug)}/reveal`, { method: 'POST' })
+  const body = await callCapability('vacancies.reveal', { params: { slug } })
   const d = body?.data ?? {}
   out(body, () => {
     console.log(`company:  ${d.company ?? '-'}`)
@@ -948,8 +1106,7 @@ async function cmdFeedbackSend(args, words) {
   if (!title) die('a title is required: hirify feedback send ' + type + ' "<title>" --body "<text>"')
   if (!text) die('the report needs a body: add --body "<text>"')
 
-  const res = await api('/agent/feedback', {
-    method: 'POST',
+  const res = await callCapability('feedback.send', {
     payload: { type, title, body: text, ...(vacancy ? { vacancy_slug: vacancy } : {}) },
     allow: [201, 202, 404, 422, 429, 502, 503],
   })
@@ -1002,7 +1159,7 @@ async function cmdFeedbackSend(args, words) {
 
 /** The profiles a person can apply with. Free, and the list `vacancy apply` picks from. */
 async function cmdProfileList() {
-  const body = await api('/agent/profiles')
+  const body = await callCapability('profiles.list')
   const list = body?.data ?? []
   out(body, () => {
     if (!list.length) {
@@ -1033,8 +1190,8 @@ async function cmdVacancyApply(args, words) {
   // in its own words, and those travel back untouched.
   if (profile !== null && !/^\d+$/.test(profile)) die('--profile takes a profile id, a number. See hirify profile list.')
 
-  const res = await api(`/agent/vacancies/${encodeURIComponent(slug)}/apply`, {
-    method: 'POST',
+  const res = await callCapability('applications.apply', {
+    params: { slug },
     payload: { ...(profile ? { profile_id: Number(profile) } : {}), ...(cover ? { cover_letter: cover } : {}) },
     allow: [201, 404, 422, 502],
   })
@@ -1086,7 +1243,7 @@ async function cmdFeedCreate(args, words) {
     payload.webhook_endpoint_id = Number(webhook)
   }
 
-  const res = await api('/agent/feeds', { method: 'POST', payload, allow: [201, 422] })
+  const res = await callCapability('feeds.create', { payload, allow: [201, 422] })
   if (res.status === 422) die(serverMessage(res.body) || 'the feed was not created. Please check the criteria.')
 
   out(res.body, () => printFeedState(res.body?.data ?? {}, 'Saved.'))
@@ -1110,7 +1267,7 @@ async function cmdFeedDeliver(args, words) {
     die('say what to change: --telegram, --no-telegram, --webhook <id> or --no-webhook.')
   }
 
-  const res = await api(`/agent/feeds/${encodeURIComponent(id)}/delivery`, { method: 'PUT', payload, allow: [200, 404, 422] })
+  const res = await callCapability('feeds.set_delivery', { params: { feed_id: id }, payload, allow: [200, 404, 422] })
   if (res.status === 404) die('there is no feed with that id. See hirify feed list.')
   if (res.status === 422) die(serverMessage(res.body) || 'the delivery settings were not accepted.')
 
@@ -1128,7 +1285,7 @@ function printFeedState(f, lead) {
 
 /** The delivery endpoints on the account. Free; creating one needs the plan. */
 async function cmdWebhookList() {
-  const body = await api('/agent/webhooks')
+  const body = await callCapability('webhooks.list')
   const list = body?.data ?? []
   out(body, () => {
     if (!list.length) {
@@ -1145,7 +1302,7 @@ async function cmdWebhookCreate(args, words) {
   const [name, url] = words
   if (!name || !url) die('both a name and an address are required: hirify webhook create "<name>" <url>')
 
-  const res = await api('/agent/webhooks', { method: 'POST', payload: { name, url }, allow: [201, 403, 422] })
+  const res = await callCapability('webhooks.create', { payload: { name, url }, allow: [201, 403, 422] })
   if (res.status === 403) die(serverMessage(res.body) || 'creating a delivery endpoint is not available on this account.')
   if (res.status === 422) die(serverMessage(res.body) || 'that address was not accepted.')
 
@@ -1261,10 +1418,10 @@ Two more things
   reaches the team and costs nothing.
 
 If a command you need is not here
-  hirify api call /agent/me sends a request to the agent API exactly as you write it and
-  prints the answer as it comes back, so a gap in this CLI is a detour and not a dead end.
-  Prefer the commands above where one fits: they say what a thing costs and what a refusal
-  means, and this one cannot.
+  hirify api call <capability> invokes any capability Hirify lists in its manifest and prints
+  the answer as it comes back, so a capability without its own command is a detour and not a
+  dead end. Inputs go in --data as a JSON object. Prefer the commands above where one fits:
+  they say what a thing costs and what a refusal means, and this one cannot.
 
 If you are an agent
   Install the working rules once: npx skills add hirifyme/hirify-cli. They cover the order
@@ -1276,51 +1433,74 @@ function cmdIntro() {
   console.log(INTRO)
 }
 
-// What `api call` will send. Anything else is a typo rather than a method the API has.
-const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+// Which method takes a request body, so a `--data` input lands in the body rather than the
+// query string when the manifest does not say where it goes.
+const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 /**
- * `/agent/me`, `agent/me` and `/api/agent/me` are one path written three ways, and all
- * three are things people write. They all arrive at the API as the same request.
- */
-function apiPath(path) {
-  const rooted = path.startsWith('/') ? path : `/${path}`
-  return rooted.startsWith('/api/') ? rooted.slice(4) : rooted
-}
-
-/**
- * The raw door. Every other command is a shape we chose for one job; this one sends what
- * you write to the agent API and prints what comes back, so a job this CLI has no command
- * for is a detour rather than a dead end.
+ * The generic door. Every other command is a shape we chose for one job; this one takes a
+ * capability by its id, looks it up in the manifest, and sends the request the manifest
+ * describes, so a capability this CLI has no command for is a detour rather than a dead end -
+ * and a capability the server adds later is reachable from here with no change to this file.
  *
- * Deliberately uninterpreted. The sign-in is attached, the path and the body go as written,
- * and the answer is printed as it arrived, refusals included: a sentence of ours in place of
- * the server's own reply is exactly what this command exists to get out of the way. That
- * also means it cannot tell you what a call costs, which the named commands can.
+ * Inputs travel in `--data` as one JSON object. Each value goes where the manifest says it
+ * belongs: into the path, the query string, or the body. The answer is printed as it arrived,
+ * refusals included: a sentence of ours in place of the server's own reply is exactly what
+ * this command exists to get out of the way, and that also means it cannot say what a call
+ * costs, which the named commands can.
  */
 async function cmdApiCall(args, words) {
-  const [path] = words
-  if (!path) {
-    die('a path is required: hirify api call /agent/me\n' +
-      '        Paths are the ones the agent API publishes, and they begin with /agent/.')
+  const [id] = words
+  if (!id) {
+    die('a capability id is required: hirify api call <capability>\n' +
+      '        The ids are the ones Hirify lists in its manifest; the named commands cover the\n' +
+      '        common ones, and this reaches the rest. Inputs go in --data as a JSON object.')
   }
 
+  // Read the inputs before reaching the server: a typo in --data is the caller's, and no
+  // manifest is needed to see it.
   const data = flag(args, '--data')
-  // A body means a write, so `--data` on its own is a POST, the way curl reads it. Any
-  // other method is written out.
-  const method = (flag(args, '--method') || (data ? 'POST' : 'GET')).toUpperCase()
-  if (!HTTP_METHODS.includes(method)) die(`--method takes one of: ${HTTP_METHODS.join(', ')}.`)
-
-  let payload = null
+  let inputs = {}
   if (data) {
     try {
-      payload = JSON.parse(data)
+      inputs = JSON.parse(data)
     } catch {
-      die('--data expects JSON, for example --data \'{"profile_id":4}\'')
+      die('--data expects JSON, for example --data \'{"slug":"senior-go-engineer"}\'')
+    }
+  }
+  if (inputs === null || typeof inputs !== 'object' || Array.isArray(inputs)) {
+    die('--data expects a JSON object of inputs, for example --data \'{"page":2}\'')
+  }
+
+  const cap = await resolveCapability(id)
+
+  // Where each input belongs, from the manifest. An input the manifest does not place goes to
+  // the body on a writing method and to the query otherwise, which is where an unplaced input
+  // most usefully lands.
+  const locations = (cap.inputs && cap.inputs.locations) || {}
+  const writes = BODY_METHODS.has(cap.method.toUpperCase())
+  const params = {}
+  const query = new URLSearchParams()
+  const body = {}
+  let hasBody = false
+
+  for (const [key, value] of Object.entries(inputs)) {
+    const where = locations[key] || (writes ? 'body' : 'query')
+    if (where === 'path') {
+      params[key] = value
+    } else if (where === 'body') {
+      body[key] = value
+      hasBody = true
+    } else {
+      query.set(key, Array.isArray(value)
+        ? value.join(',')
+        : value !== null && typeof value === 'object' ? JSON.stringify(value) : String(value))
     }
   }
 
-  const res = await api(apiPath(path), { method, payload, raw: true })
+  // Invoke it. The capability is looked up again here, which revalidates the manifest with
+  // its ETag and reuses the cached document on a 304 rather than downloading it twice.
+  const res = await callCapability(id, { params, query, payload: hasBody ? body : null, raw: true })
 
   // The body as it came: pretty-printed when it is JSON, verbatim when it is not.
   const text = res.body === null ? res.text.trim() : JSON.stringify(res.body, null, 2)
@@ -1341,7 +1521,7 @@ async function cmdApiCall(args, words) {
  * would start drifting the day it was written.
  */
 async function cmdFilterGuide() {
-  const res = await api('/agent/filters/guide', { allow: [200, 404] })
+  const res = await callCapability('filters.guide', { allow: [200, 404] })
 
   // Older servers do not serve it. Say that, rather than "not found (404)", which reads as
   // a mistake in the command. And do not offer a substitute: there is nothing here that

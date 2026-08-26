@@ -56,12 +56,104 @@ const OK_BODY = {
 }
 
 /**
- * Run one command against a stub that answers every request with `reply`. Returns what
- * the person would have seen, plus the paths the CLI actually asked for.
+ * The capabilities the curated commands resolve, at their real REST method and path. Every
+ * behaviour test reuses this manifest so a command can find the capability it asks for;
+ * transport tests hand in their own to prove the CLI follows the manifest and not a path of
+ * its own. Each row is [id, method, path, extra?].
  */
-async function run(argv, reply) {
+const CAPS = [
+  ['account.status', 'GET', '/api/agent/me'],
+  ['vacancies.search', 'GET', '/api/agent/vacancies'],
+  ['vacancies.read', 'GET', '/api/agent/vacancies/{slug}'],
+  ['vacancies.reveal', 'POST', '/api/agent/vacancies/{slug}/reveal'],
+  ['applications.apply', 'POST', '/api/agent/vacancies/{slug}/apply'],
+  ['feeds.list', 'GET', '/api/agent/feeds'],
+  ['feeds.vacancies', 'GET', '/api/agent/feeds/{feed_id}/vacancies'],
+  ['feeds.create', 'POST', '/api/agent/feeds'],
+  ['feeds.set_delivery', 'PUT', '/api/agent/feeds/{feed_id}/delivery'],
+  ['profiles.list', 'GET', '/api/agent/profiles'],
+  ['webhooks.list', 'GET', '/api/agent/webhooks'],
+  ['webhooks.create', 'POST', '/api/agent/webhooks'],
+  ['feedback.send', 'POST', '/api/agent/feedback'],
+  ['filters.guide', 'GET', '/api/agent/filters/guide'],
+]
+
+/**
+ * One capability, shaped like the API's own manifest entry (AgentManifest::capability). Path
+ * placeholders are marked `path` in the input locations; `extra.locations` adds the rest,
+ * which is all a generic `api call` needs to route an input.
+ */
+function capability(id, method, path, extra = {}) {
+  const placeholders = [...path.matchAll(/\{([a-z_]+)\}/g)].map((m) => m[1])
+  const locations = {}
+  for (const name of placeholders) locations[name] = 'path'
+  return {
+    id,
+    method,
+    path,
+    inputs: {
+      schema: { type: 'object', properties: {}, additionalProperties: false },
+      locations: { ...locations, ...(extra.locations || {}) },
+    },
+    ability: 'agent:read',
+    usage_class: 'daily',
+    stability: 'beta',
+    contract_version: 1,
+    mcp_exposure: 'resident',
+    meter: 'none',
+    rate_limit_policies: [],
+    retry_policy: 'read_only',
+    output_projection: 'x',
+    cli_alias: null,
+    description: 'x',
+  }
+}
+
+/** A whole manifest document, versioned and with a revision, the way GET /api/agent/meta answers. */
+function manifestDoc(rows = CAPS) {
+  return {
+    schema_version: 1,
+    capabilities: rows.map(([id, method, path, extra]) => capability(id, method, path, extra || {})),
+    manifest_revision: 'test-revision',
+  }
+}
+
+/**
+ * Run one command against a stub Hirify. The stub answers the two bootstrap documents itself -
+ * the public well-known and the authenticated manifest - so a test only has to describe the
+ * capability response through `reply`. Returns what the person would have seen, the capability
+ * requests in `seen` (bootstrap excluded), and the bootstrap requests with their headers.
+ *
+ * `opts`: `manifest` (the document, or null to make the manifest unservable), `wellKnown`
+ * (override the public document), `etag` (the manifest ETag, for revalidation).
+ */
+async function run(argv, reply, opts = {}) {
+  const { manifest = manifestDoc(), wellKnown = undefined, etag = '"m1"' } = opts
   const seen = []
+  const bootstrap = []
   const server = createServer((req, res) => {
+    const path = req.url.split('?')[0]
+
+    if (path === '/.well-known/hirify-agent') {
+      bootstrap.push({ url: req.url, headers: req.headers })
+      const doc = wellKnown !== undefined
+        ? wellKnown
+        : { schema_version: 1, manifest_url: `http://${req.headers.host}/api/agent/meta`, openapi_url: `http://${req.headers.host}/api/agent/openapi.json`, intro: null }
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify(doc))
+      return
+    }
+
+    if (path === '/api/agent/meta') {
+      bootstrap.push({ url: req.url, headers: req.headers })
+      if (manifest === null) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end('{}'); return }
+      const headers = { 'Content-Type': 'application/json' }
+      if (etag) headers.ETag = etag
+      if (etag && req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return }
+      res.writeHead(200, headers); res.end(JSON.stringify(manifest))
+      return
+    }
+
     seen.push(req.url)
     // `text` sends the bytes as they are, for the cases where the answer is not JSON.
     const { status = 200, body = {}, text = null, headers = {} } = reply(req) ?? {}
@@ -87,7 +179,7 @@ async function run(argv, reply) {
     child.stdout.on('data', (c) => { stdout += c })
     child.stderr.on('data', (c) => { stderr += c })
     const code = await new Promise((resolve) => child.once('close', resolve))
-    return { code, stdout, stderr, seen }
+    return { code, stdout, stderr, seen, bootstrap }
   } finally {
     server.close()
   }
@@ -478,71 +570,74 @@ test('every noun and verb in the help is a command that exists', async () => {
   }
 })
 
-// ── api call: the raw door ─────────────────────────────────────────────────
-test('api call sends the path as written and prints the answer as it came', async () => {
+// ── api call: the generic door ─────────────────────────────────────────────
+// It takes a capability id, not a path. The manifest says which method and path answer it,
+// so a capability the server adds is reachable from here with no change to the CLI.
+test('api call resolves a capability id to the method and path the manifest gives', async () => {
   const { code, stdout, seen } = await run(
-    ['api', 'call', '/agent/vacancies?search=go&per_page=2'],
+    ['api', 'call', 'vacancies.search', '--data', '{"search":"go","per_page":"2"}'],
     answer(200, { data: [], meta: { page: 1 } }),
   )
 
   assert.equal(code, 0)
-  assert.deepEqual(seen, ['/api/agent/vacancies?search=go&per_page=2'])
+  assert.equal(seen[0].split('?')[0], '/api/agent/vacancies')
+  const q = new URLSearchParams(seen[0].split('?')[1])
+  assert.equal(q.get('search'), 'go')
+  assert.equal(q.get('per_page'), '2')
   assert.deepEqual(JSON.parse(stdout), { data: [], meta: { page: 1 } })
 })
 
-test('api call reaches a path this CLI has no command for', async () => {
-  const { code, seen } = await run(['api', 'call', '/agent/something-new'], answer(200, { data: {} }))
+test('a capability invented only in the manifest is reachable with no change to the CLI', async () => {
+  // This is the whole point: nothing in bin/hirify.js names this capability. The manifest
+  // alone makes it callable, so a capability the server adds is reachable the day it ships.
+  const manifest = manifestDoc([['experiments.ping', 'GET', '/api/agent/experiments/ping']])
+  const { code, stdout, seen } = await run(['api', 'call', 'experiments.ping'], answer(200, { data: { pong: true } }), { manifest })
 
   assert.equal(code, 0)
-  assert.deepEqual(seen, ['/api/agent/something-new'])
+  assert.deepEqual(seen, ['/api/agent/experiments/ping'])
+  assert.deepEqual(JSON.parse(stdout), { data: { pong: true } })
+
+  const { readFileSync } = await import('node:fs')
+  const cli = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'bin/hirify.js'), 'utf8')
+  assert.ok(!cli.includes('experiments.ping'), 'the CLI reaches it through the manifest, not a line of its own')
 })
 
-test('the path is the same one however it is written', async () => {
-  for (const written of ['/agent/me', 'agent/me', '/api/agent/me']) {
-    const { seen } = await run(['api', 'call', written], answer(200, { data: {} }))
-    assert.deepEqual(seen, ['/api/agent/me'], `written as ${written}`)
-  }
-})
+test('api call routes each input where the manifest places it: path, query, and body', async () => {
+  const readManifest = manifestDoc([['things.read', 'GET', '/api/agent/things/{id}', { locations: { q: 'query' } }]])
+  const read = await run(['api', 'call', 'things.read', '--data', '{"id":"7","q":"hi"}'], answer(200, { data: {} }), { manifest: readManifest })
+  assert.equal(read.code, 0)
+  assert.equal(read.seen[0], '/api/agent/things/7?q=hi')
 
-test('--data makes it a POST and travels as the body', async () => {
+  const writeManifest = manifestDoc([['things.make', 'POST', '/api/agent/things', { locations: { name: 'body' } }]])
   let body = ''
-  const { code, seen } = await run(['api', 'call', '/agent/feeds', '--data', '{"name":"Go"}'], (req) => {
+  const write = await run(['api', 'call', 'things.make', '--data', '{"name":"Go"}'], (req) => {
     req.on('data', (c) => { body += c })
-    return { status: 201, body: { data: { id: 7 } } }
-  })
-
-  assert.equal(code, 0)
-  assert.deepEqual(seen, ['/api/agent/feeds'])
+    return { status: 201, body: { data: { id: 1 } } }
+  }, { manifest: writeManifest })
+  assert.equal(write.code, 0)
+  assert.equal(write.seen[0], '/api/agent/things')
   assert.deepEqual(JSON.parse(body), { name: 'Go' })
 })
 
-test('--method sends the method it names', async () => {
-  let method = ''
-  const { code } = await run(['api', 'call', '/agent/feeds/7/delivery', '--method', 'put', '--data', '{"notify_telegram":true}'],
-    (req) => { method = req.method; return { status: 200, body: { data: {} } } })
-
-  assert.equal(code, 0)
-  assert.equal(method, 'PUT')
-})
-
-test('a method the API does not have is refused before anything is sent', async () => {
-  const { code, stderr, seen } = await run(['api', 'call', '/agent/me', '--method', 'fetch'], answer(200, {}))
+test('api call names a capability the manifest does not list and sends nothing to it', async () => {
+  const { code, stderr, seen } = await run(['api', 'call', 'nope.nope'], answer(200, {}))
 
   assert.equal(code, 1)
-  assert.match(stderr, /--method takes one of: GET, POST, PUT, PATCH, DELETE\./)
-  assert.deepEqual(seen, [], 'nothing is asked of the server')
+  assert.match(stderr, /this Hirify does not offer "nope\.nope"/)
+  assert.deepEqual(seen, [], 'no capability request is made')
 })
 
 test('--data that is not JSON is refused before anything is sent', async () => {
-  const { code, stderr, seen } = await run(['api', 'call', '/agent/feeds', '--data', 'name=Go'], answer(200, {}))
+  const { code, stderr, seen, bootstrap } = await run(['api', 'call', 'vacancies.search', '--data', 'search=go'], answer(200, {}))
 
   assert.equal(code, 1)
   assert.match(stderr, /--data expects JSON/)
-  assert.deepEqual(seen, [], 'nothing is asked of the server')
+  assert.deepEqual(seen, [], 'no capability request is made')
+  assert.deepEqual(bootstrap, [], 'a typo in --data is caught before the server is reached')
 })
 
 test('a refusal keeps the server own words and still exits non-zero', async () => {
-  const { code, stdout, stderr } = await run(['api', 'call', '/agent/feeds'], answer(422, {
+  const { code, stdout, stderr } = await run(['api', 'call', 'feeds.create', '--data', '{}'], answer(422, {
     error: true,
     message: 'The name field is required.',
     errors: { name: ['The name field is required.'] },
@@ -556,7 +651,7 @@ test('a refusal keeps the server own words and still exits non-zero', async () =
 })
 
 test('an answer that is not JSON is printed as it came rather than dropped', async () => {
-  const { code, stdout } = await run(['api', 'call', '/agent/me'], () => ({
+  const { code, stdout } = await run(['api', 'call', 'account.status'], () => ({
     status: 502,
     text: '<html><body>Bad Gateway</body></html>',
     headers: { 'Content-Type': 'text/html' },
@@ -735,4 +830,115 @@ test('no shipped text states what a budget is worth in numbers', async () => {
     const stated = text.match(/\d+ (reveals?|applications?|applies|vacancy opens?|opens?) (a|per) day|allowance of \d+|\d+ per day/i)
     assert.equal(stated, null, `${file} puts a number on a budget: ${stated?.[0]}`)
   }
+})
+
+// ── the manifest: the CLI learns operations, it does not carry them ─────────
+// The CLI holds no agent operation path of its own. It learns the manifest URL from the
+// public well-known document, fetches the manifest, and every command finds its capability
+// there. These tests pin that transport.
+test('a command bootstraps through the well-known and the manifest, then calls its capability', async () => {
+  const { code, bootstrap, seen } = await run(['account', 'show'], answer(200, { data: { plan: 'free', quota: {} } }))
+
+  assert.equal(code, 0)
+  const paths = bootstrap.map((b) => b.url.split('?')[0])
+  assert.deepEqual(paths, ['/.well-known/hirify-agent', '/api/agent/meta'])
+  assert.deepEqual(seen, ['/api/agent/me'])
+})
+
+test('the manifest is fetched once for a command', async () => {
+  const { bootstrap } = await run(['feed', 'list'], answer(200, { data: [] }))
+
+  const metas = bootstrap.filter((b) => b.url.split('?')[0] === '/api/agent/meta')
+  assert.equal(metas.length, 1, 'the manifest is downloaded once per process')
+})
+
+test('the CLI follows the path the manifest gives, not one of its own', async () => {
+  // The manifest moves account status to a different path. A CLI that hardcoded /api/agent/me
+  // would ignore this and call the old path; this one follows the manifest.
+  const manifest = manifestDoc([['account.status', 'GET', '/api/agent/v2/me']])
+  const { code, seen } = await run(['account', 'show'], answer(200, { data: { plan: 'free', quota: {} } }), { manifest })
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/v2/me'])
+})
+
+test('a curated command reaches its capability by id, whatever the manifest orders them in', async () => {
+  // Ordering is the server's; the CLI finds a capability by id, not by position.
+  const reversed = [...CAPS].reverse()
+  const { code, seen } = await run(['profile', 'list'], answer(200, { data: [] }), { manifest: manifestDoc(reversed) })
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/profiles'])
+})
+
+test('a manifest whose schema is newer than the CLI is refused with a stable exit code', async () => {
+  const manifest = { schema_version: 2, capabilities: [], manifest_revision: 'x' }
+  const { code, stderr, seen } = await run(['account', 'show'], answer(200, {}), { manifest })
+
+  assert.equal(code, 2, 'a stable, distinct exit code for "update the CLI"')
+  assert.match(stderr, /newer manifest than this CLI can read/)
+  assert.deepEqual(seen, [], 'no capability is called against a manifest the CLI cannot read')
+})
+
+test('unknown fields in the manifest are ignored, not refused', async () => {
+  // The CLI accepts fields it does not know, so the server can add them without a client release.
+  const manifest = manifestDoc()
+  manifest.a_future_top_level_field = 'ignored'
+  manifest.capabilities[0].a_future_capability_field = 'ignored'
+  const { code, seen } = await run(['account', 'show'], answer(200, { data: { plan: 'free', quota: {} } }), { manifest })
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/me'])
+})
+
+test('a second manifest lookup in one process revalidates with the ETag and reuses the cache', async () => {
+  // `api call` reads the capability's inputs, then invokes it: two lookups in one process.
+  // The first downloads the manifest; the second sends If-None-Match and the server answers
+  // 304, so the document is downloaded once and revalidated after.
+  const manifest = manifestDoc([['experiments.ping', 'GET', '/api/agent/experiments/ping']])
+  const { code, bootstrap } = await run(['api', 'call', 'experiments.ping'], answer(200, { data: {} }), { manifest, etag: '"rev-1"' })
+
+  assert.equal(code, 0)
+  const metas = bootstrap.filter((b) => b.url.split('?')[0] === '/api/agent/meta')
+  assert.equal(metas.length, 2, 'looked up twice in one process')
+  assert.equal(metas[0].headers['if-none-match'], undefined, 'the first lookup downloads the manifest')
+  assert.equal(metas[1].headers['if-none-match'], '"rev-1"', 'the second revalidates with the stored ETag')
+})
+
+test('the manifest is not persisted: a fresh run downloads it again', async () => {
+  // Cached only for the process. Two runs are two processes, and neither reads a manifest the
+  // other left behind, so a server change is picked up on the next command.
+  const first = await run(['feed', 'list'], answer(200, { data: [] }))
+  const second = await run(['feed', 'list'], answer(200, { data: [] }))
+
+  const metas = (r) => r.bootstrap.filter((b) => b.url.split('?')[0] === '/api/agent/meta')
+  assert.equal(metas(first).length, 1)
+  assert.equal(metas(second).length, 1)
+  assert.equal(metas(second)[0].headers['if-none-match'], undefined, 'nothing carried over from the first run')
+})
+
+test('a server with no manifest url in its well-known is reported, and nothing is called', async () => {
+  const { code, stderr, seen } = await run(['account', 'show'], answer(200, {}), { wellKnown: { schema_version: 1 } })
+
+  assert.equal(code, 1)
+  assert.match(stderr, /could not reach Hirify to load what it can do/)
+  assert.deepEqual(seen, [])
+})
+
+test('a server that cannot serve the manifest is reported, and nothing is called', async () => {
+  const { code, stderr, seen } = await run(['account', 'show'], answer(200, {}), { manifest: null })
+
+  assert.equal(code, 1)
+  assert.match(stderr, /could not load what Hirify can do/)
+  assert.deepEqual(seen, [])
+})
+
+test('a missing argument is caught before the manifest is fetched', async () => {
+  // The argument check is the caller's, and needs no manifest. Nothing is asked of the server.
+  const { code, stderr, seen, bootstrap } = await run(['vacancy', 'read'], answer(200, {}))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /a vacancy slug is required/)
+  assert.deepEqual(seen, [])
+  assert.deepEqual(bootstrap, [], 'the manifest is not fetched to tell someone they forgot the slug')
 })
