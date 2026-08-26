@@ -91,7 +91,7 @@ const HELP = `hirify - job search for AI agents
 
   hirify filter guide             what search can filter on, from the server
   hirify feedback send <kind>     report a bug or ask for a feature
-  hirify api call <capability>    invoke any capability, raw   [--data JSON]
+  hirify api call <capability>    invoke any capability        [--data JSON] [--fields a,b]
 
   --json                          raw JSON instead of text
 
@@ -110,7 +110,14 @@ No browser (CI, servers): hirify auth <key>, or the HIRIFY_KEY variable.
 Key: hirify.me/account/api-access`
 
 // ── helpers ────────────────────────────────────────────────────────────────
-const die = (msg, code = 1) => { console.error(`hirify: ${msg}`); process.exit(code) }
+// Exit codes are a stable contract, so a caller can branch on them: 0 is success, 1 is an
+// ordinary error, and 2 means this Hirify speaks a newer manifest than this build can read -
+// "update the CLI", told apart from "the command failed". These three do not change.
+const EXIT_OK = 0
+const EXIT_ERROR = 1
+const EXIT_MANIFEST_UNSUPPORTED = 2
+
+const die = (msg, code = EXIT_ERROR) => { console.error(`hirify: ${msg}`); process.exit(code) }
 
 // Options that stand on their own. Everything else takes the next word as its value, and
 // that rule is what lets `search` carry a filter the CLI has never heard of: the list of
@@ -121,8 +128,9 @@ const die = (msg, code = 1) => { console.error(`hirify: ${msg}`); process.exit(c
 // read as data.
 const BOOLEAN_FLAGS = new Set(['--json', '--help', '--no-browser', '--telegram', '--no-telegram', '--no-webhook'])
 
-// Ours, not the API's. These never reach a query string.
-const CLI_ONLY = new Set(['json'])
+// Ours, not the API's. These never reach a query string: `--json` steers the CLI, and
+// `--fields` chooses which fields a compact render prints.
+const CLI_ONLY = new Set(['json', 'fields'])
 
 /** Does this option take the word after it, or does it stand alone? */
 const takesValue = (args, i) =>
@@ -283,7 +291,7 @@ async function api(path, { method = 'GET', payload = null, allow = [], raw = fal
   }
 
   // `api call` reads every answer itself, refusal included: that is what it is for, and a
-  // sentence of ours in place of the server's own reply would defeat the point of a raw door.
+  // sentence of ours in place of the server's own reply would defeat the point of `api call`.
   if (raw) {
     const text = await res.text()
     let body = null
@@ -358,10 +366,6 @@ async function api(path, { method = 'GET', payload = null, allow = [], raw = fal
 // speaks a document this build cannot interpret safely, and the CLI says so rather than
 // guessing. Lower or equal is fine: unknown fields are ignored, not refused.
 const SUPPORTED_SCHEMA_VERSION = 1
-// A dedicated, stable exit code for exactly that: the server's manifest is newer than this
-// CLI. Kept apart from the ordinary error exit so a caller can tell "update the CLI" from
-// "the command failed".
-const EXIT_MANIFEST_UNSUPPORTED = 2
 
 /**
  * Where the manifest lives, learned from the public Hirify agent document rather than
@@ -375,14 +379,17 @@ async function agentDiscovery() {
   if (agentDiscoveryCache) return agentDiscoveryCache
   try {
     const res = await fetch(`${API}${AGENT_WELL_KNOWN}`, { headers: { Accept: 'application/json' } })
-    if (!res.ok) return (agentDiscoveryCache = { manifest_url: null })
+    if (!res.ok) return (agentDiscoveryCache = { manifest_url: null, intro: null })
     const doc = await res.json()
     agentDiscoveryCache = {
       manifest_url: typeof doc.manifest_url === 'string' && doc.manifest_url ? doc.manifest_url : null,
+      // Release-approved intro text, published here so it can be refreshed without a new CLI.
+      // `hirify intro` prints it and falls back to the built-in text when it is absent.
+      intro: typeof doc.intro === 'string' && doc.intro ? doc.intro : null,
     }
   } catch {
     // Unreachable is the same fact as unusable to the caller: no manifest, so no operations.
-    agentDiscoveryCache = { manifest_url: null }
+    agentDiscoveryCache = { manifest_url: null, intro: null }
   }
   return agentDiscoveryCache
 }
@@ -1429,8 +1436,72 @@ If you are an agent
 
 Every command takes --json. The full list of them: hirify --help`
 
-function cmdIntro() {
-  console.log(INTRO)
+async function cmdIntro() {
+  // The intro is release-approved text published on the public agent well-known, so it can be
+  // refreshed without shipping a new CLI. It needs no sign-in and no manifest. When Hirify
+  // cannot be reached, or publishes none, the built-in text below stands in - so `hirify intro`
+  // and the sign-in help it carries work before login and with no network.
+  const { intro } = await agentDiscovery()
+  console.log(typeof intro === 'string' && intro ? intro : INTRO)
+}
+
+// The fields the compact vacancy view keeps from a full summary card: the shortlist signal a
+// scan needs, without the detail `vacancy read` adds. This is the selection the context budget
+// is measured against - twenty of them serialize small - so a page of results does not spend an
+// agent's context on fields it does not act on here. `--fields` narrows it; `--json` keeps the
+// whole card.
+const CARD_FIELDS = ['slug', 'title', 'company_masked', 'remote_type', 'work_format', 'english_level', 'salary']
+
+// The projections whose compact selection is the vacancy card. `api call` renders these with
+// CARD_FIELDS by default, the same shortlist view `vacancy search` prints.
+const KNOWN_CARD_PROJECTIONS = new Set(['vacancy.summary'])
+
+// The field names asked for with --fields, or null for "every field the answer carries".
+const fieldList = (args) => {
+  const raw = flag(args, '--fields')
+  return raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : null
+}
+
+// One item reduced to the fields asked for, keeping only the ones the server actually sent, so
+// a selection never manufactures a field the API did not return.
+function selectFields(item, fields) {
+  if (item === null || typeof item !== 'object' || Array.isArray(item)) return item
+  const keys = (fields ?? Object.keys(item)).filter((k) => Object.hasOwn(item, k))
+  return Object.fromEntries(keys.map((k) => [k, item[k]]))
+}
+
+// A value on one line: an address or a number as it is, a list joined, an object as compact
+// JSON. Nothing is dropped; a missing value reads as a dash rather than the word undefined.
+const scalarText = (v) => {
+  if (v === null || v === undefined) return '-'
+  if (Array.isArray(v)) return v.map(scalarText).filter((s) => s !== '').join(', ')
+  if (typeof v === 'object') return JSON.stringify(v)
+  return String(v)
+}
+
+/**
+ * A compact view of a capability answer the CLI has no bespoke command for. It prints the
+ * fields the server returned, one per line, item by item, so `hirify api call` reads without
+ * --json. `--fields` narrows to the names asked for, and a known card projection is narrowed to
+ * the shortlist selection by default. It never invents a field, and --json still hands over the
+ * whole canonical answer.
+ */
+function renderGeneric(body, fields = null) {
+  const payload = body && typeof body === 'object' && !Array.isArray(body) && 'data' in body ? body.data : body
+  const items = Array.isArray(payload) ? payload : [payload]
+  const blocks = []
+  for (const item of items) {
+    const picked = selectFields(item, fields)
+    if (picked === null || typeof picked !== 'object' || Array.isArray(picked)) {
+      const text = picked === null || picked === undefined ? '' : String(picked)
+      if (text) blocks.push(text)
+      continue
+    }
+    const rows = Object.entries(picked).map(([k, v]) => `${k}: ${scalarText(v)}`)
+    if (rows.length) blocks.push(rows.join('\n'))
+  }
+  const text = blocks.join('\n\n')
+  if (text) console.log(text)
 }
 
 // Which method takes a request body, so a `--data` input lands in the body rather than the
@@ -1438,7 +1509,7 @@ function cmdIntro() {
 const BODY_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 /**
- * The generic door. Every other command is a shape we chose for one job; this one takes a
+ * The generic call. Every other command is a shape we chose for one job; this one takes a
  * capability by its id, looks it up in the manifest, and sends the request the manifest
  * describes, so a capability this CLI has no command for is a detour rather than a dead end -
  * and a capability the server adds later is reachable from here with no change to this file.
@@ -1502,9 +1573,20 @@ async function cmdApiCall(args, words) {
   // its ETag and reuses the cached document on a 304 rather than downloading it twice.
   const res = await callCapability(id, { params, query, payload: hasBody ? body : null, raw: true })
 
-  // The body as it came: pretty-printed when it is JSON, verbatim when it is not.
-  const text = res.body === null ? res.text.trim() : JSON.stringify(res.body, null, 2)
-  if (text) console.log(text)
+  // Under --json, or when the server refused, or when the answer is not JSON, the canonical
+  // body goes through untouched: --json is the raw contract, a refusal carries the server's own
+  // machine-readable words, and a non-JSON answer has no fields to select. Otherwise the answer
+  // is rendered compactly - a known card projection narrowed to its shortlist selection, any
+  // other shape by its own fields - so `api call` reads without --json and stays small in an
+  // agent's context. --fields narrows the selection further.
+  const raw = process.argv.includes('--json') || res.status >= 400 || res.body === null
+  if (raw) {
+    const text = res.body === null ? res.text.trim() : JSON.stringify(res.body, null, 2)
+    if (text) console.log(text)
+  } else {
+    const fields = fieldList(args) ?? (KNOWN_CARD_PROJECTIONS.has(cap.output_projection) ? CARD_FIELDS : null)
+    renderGeneric(res.body, fields)
+  }
   // On stderr, so that stdout stays the server's answer and nothing else.
   if (res.status >= 400) die(`the server answered ${res.status}. The answer is above.`)
 }
@@ -1567,7 +1649,7 @@ const NOUNS = {
 
 const [noun, ...args] = process.argv.slice(2)
 
-if (!noun || noun === '--help' || noun === '-h' || noun === 'help') { console.log(HELP); process.exit(0) }
+if (!noun || noun === '--help' || noun === '-h' || noun === 'help') { console.log(HELP); process.exit(EXIT_OK) }
 
 // `Object.hasOwn`, not a plain lookup: every object inherits `toString` and `constructor`,
 // and `hirify toString` used to find one and run it, which exits 0 having done nothing.
@@ -1576,7 +1658,7 @@ if (Object.hasOwn(PLAIN, noun)) {
 } else if (Object.hasOwn(NOUNS, noun)) {
   const verbs = NOUNS[noun]
   const known = `hirify ${noun} takes a verb: ${Object.keys(verbs).join(', ')}`
-  if (args.includes('--help') || args.includes('-h')) { console.log(known); process.exit(0) }
+  if (args.includes('--help') || args.includes('-h')) { console.log(known); process.exit(EXIT_OK) }
 
   // The verb is read from the positionals, so an option written in front of it cannot
   // stand in for it: `hirify feed --json list` is still the list.

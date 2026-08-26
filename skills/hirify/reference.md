@@ -12,9 +12,13 @@ come from commands: `hirify filter guide` for filters, `hirify account show` for
 `hirify account show --json` for the plan and the limits. Where this file would have quoted one, it
 names the command instead.
 
-Add `--json` to any command to get the server's payload verbatim instead of the text below. Parse
-`--json`; do not parse the text, it is written for a person to read. Every failure exits non-zero and
-writes one line to stderr beginning with `hirify: `.
+Add `--json` to any command to get the server's payload verbatim instead of the text below.
+`--fields a,b` narrows a compact answer to the fields you name and never adds one the answer did not
+carry. Parse `--json`; do not parse the text, it is written for a person to read.
+
+**Exit codes are stable.** `0` is success, `1` an ordinary error, and `2` means this Hirify speaks a
+newer manifest than your CLI can read - update the CLI. Every failure also writes one line to stderr
+beginning with `hirify: `. Branch on the code rather than on the message text.
 
 Set `HIRIFY_DEBUG=1` in front of a command to also get the server's own answer on stderr. Use it
 when you need to report a problem; the normal output never contains raw payloads.
@@ -30,7 +34,7 @@ when you need to report a problem; the normal output never contains raw payloads
 | `feed create`, `feed deliver`, `webhook create` | free | changes the user's account |
 | `feedback send` | free | a ticket is filed |
 | `filter guide` | free: it spends nothing | reading only |
-| `api call` | whatever the path it calls costs | whatever that path does |
+| `api call` | whatever the capability it calls costs | whatever that capability does |
 
 Free is not unlimited: every command is rate-limited, reading more loosely than searching. A burst
 answers `429` and names the seconds to wait. The numbers are the server's and change without this
@@ -224,29 +228,32 @@ reply, fix or date is promised. Report that it was passed on and stop there.
 Refusals: too many reports in a short time (with the wait in seconds), the channel being off, or the
 report not being accepted.
 
-## api call: the raw door
+## api call: any capability by its id
 
 ```bash
-hirify api call <path> [--method GET|POST|PUT|PATCH|DELETE] [--data '<json>']
+hirify api call <capability-id> [--data '<json>'] [--fields a,b] [--json]
 ```
 
-Sends a request to the agent API as you write it and prints the answer as it comes back. It is here
-so that a job this CLI has no command for is a detour rather than a dead end.
+Invokes any capability Hirify lists in its manifest, by its id, and prints the answer. It is here so
+that a job this CLI has no named command for is a detour rather than a dead end. The ids are the
+ones the manifest publishes; the named commands above cover the common ones, and this reaches the
+rest.
 
 ```bash
-hirify api call /agent/me
-hirify api call '/agent/vacancies?search=go&per_page=5'
-hirify api call /agent/feeds --data '{"name":"Senior Go","filters":{}}'
-hirify api call /agent/feeds/7/delivery --method PUT --data '{"notify_telegram":true}'
+hirify api call account.status
+hirify api call vacancies.search --data '{"search":"go","per_page":5}'
+hirify api call feeds.create --data '{"name":"Senior Go","filters":{}}'
 ```
 
-- The path is the one the API publishes and begins with `/agent/`. `/agent/me`, `agent/me` and
-  `/api/agent/me` are one path written three ways and all arrive as the same request.
-- `--data` makes the call a POST and travels as the JSON body. `--method` names any other method.
-  A method outside the five, or a `--data` that is not JSON, is refused before anything is sent.
-- The answer is printed as it arrived, refusals included, so what you parse is the server's own
-  payload rather than a sentence of ours. The status goes to stderr and the exit code is non-zero
-  when the server refused.
+- Inputs go in `--data` as one JSON object. Each value is routed where the manifest places it: into
+  the path, the query string, or the body. A `--data` that is not JSON is refused before anything is
+  sent, and a capability the manifest does not list is named as unknown without a request being made.
+- The answer is rendered compactly by default, so it reads without a parser: a vacancy card shows the
+  same shortlist fields `vacancy search` prints, and any other shape shows the fields the server
+  returned, one per line. `--fields a,b` narrows that to the fields you name.
+- `--json` gives the raw canonical answer instead, refusals included, so what you parse is the
+  server's own payload rather than a sentence of ours. On a refusal the raw answer is printed and the
+  exit code is non-zero.
 
 **Prefer a named command where one exists.** This one carries none of what they know: it will not
 tell you that a call costs a reveal, and it will send a real application as readily as

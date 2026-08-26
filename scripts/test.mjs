@@ -10,7 +10,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -53,6 +53,44 @@ const OK_BODY = {
   data: VACANCY,
   charged: true,
   quota: { action: 'vacancy_opens', limit: 1000, used: 2, remaining: 998, used_by_agent: 2 },
+}
+
+/**
+ * A compact search card shaped like VacancySummaryProjection (spec §6): the fields the server
+ * returns for search, feed lists and webhook cards. This is NOT the full detail card (VACANCY
+ * above) - it carries no `company` string, no url, no created_at. The context-budget gate
+ * measures a page of these after the CLI selects the shortlist fields from them, and each card
+ * is deliberately richer than a median production card so the guard has no slack it should not.
+ */
+function summaryCard(i) {
+  return {
+    title: ['Senior Go Engineer', 'Backend Developer (Python)', 'Full-Stack Engineer', 'Data Platform Engineer'][i % 4],
+    slug: `vacancy-${i}-some-company`,
+    company_masked: i % 3 === 0,
+    can_apply_directly: i % 2 === 0,
+    skills: ['go', 'kubernetes', 'postgres', 'grpc'].slice(0, (i % 4) + 1),
+    specializations: [{ code: 'backend', name: 'Бэкенд', name_en: 'Backend' }],
+    grades: ['senior'],
+    regions: [{ code: 'eu', name: 'Европа', name_en: 'Europe' }],
+    cities: ['berlin'],
+    remote_type: ['remote', 'hybrid', 'onsite'][i % 3],
+    work_format: i % 2 ? ['fulltime'] : [],
+    salary: i % 2 ? { currency: 'USD', min: 5000, max: 7000, salary_in_usd: 6000 } : null,
+    vacancy_language: 'en',
+    english_level: ['b1', 'b2', 'c1'][i % 3],
+  }
+}
+
+/**
+ * The compact card selection the CLI actually applies, read from the source so the gate measures
+ * the real field list and not a copy of it that could drift. The gate is the CLI's selection, so
+ * it has to be the CLI's own list.
+ */
+function cliCardFields() {
+  const cli = readFileSync(CLI, 'utf8')
+  const m = cli.match(/const CARD_FIELDS = \[([^\]]*)\]/)
+  assert.ok(m, 'CARD_FIELDS is defined in the CLI')
+  return m[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean)
 }
 
 /**
@@ -103,7 +141,7 @@ function capability(id, method, path, extra = {}) {
     meter: 'none',
     rate_limit_policies: [],
     retry_policy: 'read_only',
-    output_projection: 'x',
+    output_projection: extra.projection ?? 'x',
     cli_alias: null,
     description: 'x',
   }
@@ -128,7 +166,7 @@ function manifestDoc(rows = CAPS) {
  * (override the public document), `etag` (the manifest ETag, for revalidation).
  */
 async function run(argv, reply, opts = {}) {
-  const { manifest = manifestDoc(), wellKnown = undefined, etag = '"m1"' } = opts
+  const { manifest = manifestDoc(), wellKnown = undefined, etag = '"m1"', wellKnownStatus = 200 } = opts
   const seen = []
   const bootstrap = []
   const server = createServer((req, res) => {
@@ -136,10 +174,13 @@ async function run(argv, reply, opts = {}) {
 
     if (path === '/.well-known/hirify-agent') {
       bootstrap.push({ url: req.url, headers: req.headers })
+      // `wellKnownStatus: 'drop'` cuts the socket so the fetch throws: the deterministic stand-in
+      // for Hirify being unreachable, which `intro` has to survive.
+      if (wellKnownStatus === 'drop') { req.socket.destroy(); return }
       const doc = wellKnown !== undefined
         ? wellKnown
         : { schema_version: 1, manifest_url: `http://${req.headers.host}/api/agent/meta`, openapi_url: `http://${req.headers.host}/api/agent/openapi.json`, intro: null }
-      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.writeHead(wellKnownStatus, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify(doc))
       return
     }
@@ -476,7 +517,11 @@ test('the last page does not offer another one', async () => {
 })
 
 // ── intro ──────────────────────────────────────────────────────────────────
-test('intro explains the work and asks nothing of the network', async () => {
+// The published intro is release-approved text on the public agent well-known, so it can be
+// refreshed without a new CLI. When Hirify publishes none, or cannot be reached, the built-in
+// text stands in - so intro and the sign-in help it carries work before login and offline.
+test('intro falls back to the built-in guide when the well-known publishes none', async () => {
+  // The default well-known serves intro: null, so this exercises the fallback.
   const { code, stdout, seen } = await run(['intro'], answer(200, {}))
 
   assert.equal(code, 0)
@@ -488,6 +533,31 @@ test('intro explains the work and asks nothing of the network', async () => {
   }
   assert.match(stdout, /Reading one vacancy in full spends one of the day's vacancy opens/)
   assert.match(stdout, /cannot be recalled/)
+})
+
+test('intro prints the text Hirify publishes when the well-known carries one', async () => {
+  const published = 'Hirify intro, published 2026. This is the release-approved guide.'
+  const { code, stdout, seen, bootstrap } = await run(['intro'], answer(200, {}), {
+    wellKnown: { schema_version: 1, intro: published },
+  })
+
+  assert.equal(code, 0)
+  assert.equal(stdout.trim(), published, 'the published intro is printed as it came')
+  assert.ok(!stdout.includes('job search for AI agents'), 'not the built-in fallback')
+  assert.deepEqual(seen, [], 'no capability is called: intro needs no sign-in')
+  const wells = bootstrap.filter((b) => b.url.split('?')[0] === '/.well-known/hirify-agent')
+  assert.equal(wells.length, 1, 'the intro is fetched from the public well-known')
+  assert.equal(wells[0].headers.authorization, undefined, 'and it is fetched without a token')
+})
+
+test('intro still works when Hirify cannot be reached', async () => {
+  // The well-known socket is cut, so the fetch throws. intro must not need the network: this is
+  // the "sign-in help available offline" requirement.
+  const { code, stdout } = await run(['intro'], answer(200, {}), { wellKnownStatus: 'drop' })
+
+  assert.equal(code, 0)
+  assert.match(stdout, /hirify login/)
+  assert.match(stdout, /Reading one vacancy in full spends one of the day's vacancy opens/)
 })
 
 test('intro is reachable from the help', async () => {
@@ -574,8 +644,10 @@ test('every noun and verb in the help is a command that exists', async () => {
 // It takes a capability id, not a path. The manifest says which method and path answer it,
 // so a capability the server adds is reachable from here with no change to the CLI.
 test('api call resolves a capability id to the method and path the manifest gives', async () => {
+  // --json here for the canonical echo: routing is proven by `seen`, and --json is the raw
+  // contract, so the body comes back exactly as the server sent it.
   const { code, stdout, seen } = await run(
-    ['api', 'call', 'vacancies.search', '--data', '{"search":"go","per_page":"2"}'],
+    ['api', 'call', 'vacancies.search', '--json', '--data', '{"search":"go","per_page":"2"}'],
     answer(200, { data: [], meta: { page: 1 } }),
   )
 
@@ -584,6 +656,7 @@ test('api call resolves a capability id to the method and path the manifest give
   const q = new URLSearchParams(seen[0].split('?')[1])
   assert.equal(q.get('search'), 'go')
   assert.equal(q.get('per_page'), '2')
+  assert.equal(q.get('json'), null, 'a CLI flag is never sent to the server')
   assert.deepEqual(JSON.parse(stdout), { data: [], meta: { page: 1 } })
 })
 
@@ -591,7 +664,7 @@ test('a capability invented only in the manifest is reachable with no change to 
   // This is the whole point: nothing in bin/hirify.js names this capability. The manifest
   // alone makes it callable, so a capability the server adds is reachable the day it ships.
   const manifest = manifestDoc([['experiments.ping', 'GET', '/api/agent/experiments/ping']])
-  const { code, stdout, seen } = await run(['api', 'call', 'experiments.ping'], answer(200, { data: { pong: true } }), { manifest })
+  const { code, stdout, seen } = await run(['api', 'call', 'experiments.ping', '--json'], answer(200, { data: { pong: true } }), { manifest })
 
   assert.equal(code, 0)
   assert.deepEqual(seen, ['/api/agent/experiments/ping'])
@@ -659,6 +732,49 @@ test('an answer that is not JSON is printed as it came rather than dropped', asy
 
   assert.equal(code, 1)
   assert.equal(stdout.trim(), '<html><body>Bad Gateway</body></html>')
+})
+
+// ── api call: the compact render ───────────────────────────────────────────
+// Without --json the answer is rendered compactly, so `api call` reads without a parser and
+// stays small in an agent's context. --json is still the raw canonical body (pinned above).
+test('api call renders a compact view of the answer without --json', async () => {
+  const { code, stdout } = await run(['api', 'call', 'account.status'], answer(200, {
+    data: { plan: 'pro', seats: 3, active: true },
+  }))
+
+  assert.equal(code, 0)
+  assert.match(stdout, /^plan: pro$/m)
+  assert.match(stdout, /^seats: 3$/m)
+  assert.match(stdout, /^active: true$/m)
+  assert.ok(!stdout.includes('{'), 'the compact view is fields, not raw JSON')
+})
+
+test('--fields narrows the compact view and never names a field the answer lacks', async () => {
+  const { code, stdout } = await run(
+    ['api', 'call', 'account.status', '--fields', 'plan,missing'],
+    answer(200, { data: { plan: 'pro', seats: 3, active: true } }),
+  )
+
+  assert.equal(code, 0)
+  assert.match(stdout, /^plan: pro$/m)
+  assert.ok(!stdout.includes('seats'), '--fields drops what was not asked for')
+  assert.ok(!stdout.includes('missing'), 'a field the answer does not carry is not manufactured (spec §6)')
+})
+
+test('api call renders a known card projection as the shortlist, not the whole card', async () => {
+  // The capability declares the vacancy card projection, so the compact view is the shortlist
+  // selection - the same fields `vacancy search` shows - and not the detail `vacancy read` adds.
+  const manifest = manifestDoc([['vacancies.search', 'GET', '/api/agent/vacancies', { projection: 'vacancy.summary' }]])
+  const { code, stdout } = await run(['api', 'call', 'vacancies.search'], answer(200, {
+    data: [summaryCard(1)],
+    meta: { page: 1, per_page: 20, total: 1, last_page: 1 },
+  }), { manifest })
+
+  assert.equal(code, 0)
+  assert.match(stdout, /^slug: vacancy-1-some-company$/m)
+  assert.match(stdout, /^title: /m)
+  assert.ok(!stdout.includes('skills:'), 'skills belong to the detail view, not the shortlist')
+  assert.ok(!stdout.includes('specializations'), 'the compact card is a shortlist, not the whole card')
 })
 
 test('a name every object inherits is not a command', async () => {
@@ -941,4 +1057,46 @@ test('a missing argument is caught before the manifest is fetched', async () => 
   assert.match(stderr, /a vacancy slug is required/)
   assert.deepEqual(seen, [])
   assert.deepEqual(bootstrap, [], 'the manifest is not fetched to tell someone they forgot the slug')
+})
+
+// ── context budgets: a page of results and the skill both stay small ────────
+// Spec §10.1. The search budget is measured on the CLI's compact SELECTION of the card - the
+// shortlist fields the renderer keeps - not the raw API card, which --json still hands over in
+// full. Frozen M4/M5 evidence put twenty real cards at about 3,158 bytes selected against about
+// 18,980 raw; this pins the guard with a fixture richer than a median card, so it has no slack it
+// should not. The selection is read from the CLI source, so the gate measures the real field list.
+test('a default search of twenty vacancies fits the context budget after field selection', async () => {
+  const fields = cliCardFields()
+  const cards = Array.from({ length: 20 }, (_, i) => summaryCard(i))
+  const selected = cards.map((c) => Object.fromEntries(
+    fields.filter((f) => Object.hasOwn(c, f)).map((f) => [f, c[f]]),
+  ))
+
+  const bytes = Buffer.byteLength(JSON.stringify(selected))
+  assert.ok(bytes <= 4096, `twenty selected cards serialize to ${bytes} bytes, over the 4096 budget`)
+  // Not a tautology: the raw page is well over budget by design, which is why the CLI selects.
+  // --json hands those full cards back when an agent wants them.
+  assert.ok(Buffer.byteLength(JSON.stringify(cards)) > 4096, 'the raw page is over budget by design')
+})
+
+test('the skill stays within the harness budget', async () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const bytes = Buffer.byteLength(readFileSync(join(root, 'skills/hirify/SKILL.md')))
+  assert.ok(bytes <= 8192, `SKILL.md is ${bytes} bytes, over the 8192 budget`)
+})
+
+// ── exit codes are a stable contract ───────────────────────────────────────
+// 0 is success, 1 an ordinary error, 2 a manifest newer than this build can read. A caller
+// branches on these, so they are pinned together rather than left implicit across the suite.
+test('the exit codes are a stable contract: 0 ok, 1 error, 2 manifest too new', async () => {
+  const ok = await run(['--help'], answer(200, {}))
+  assert.equal(ok.code, 0, 'help succeeds')
+
+  const err = await run(['definitely-not-a-command'], answer(200, {}))
+  assert.equal(err.code, 1, 'an unknown command is an ordinary error')
+
+  const tooNew = await run(['account', 'show'], answer(200, {}), {
+    manifest: { schema_version: 9, capabilities: [], manifest_revision: 'x' },
+  })
+  assert.equal(tooNew.code, 2, 'a manifest this build cannot read has its own stable code')
 })

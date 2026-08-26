@@ -46,11 +46,13 @@ computer.
 `hirify filter guide` prints what search can filter on. It comes from the server, so it is current
 by construction; nothing about filters is written into this package.
 
-Add `--json` to any command to parse the answer instead of reading it. Put `HIRIFY_DEBUG=1` in
-front of one when you need the server's own reply to attach to a bug report.
+Add `--json` to any command for the server's answer as JSON instead of the text a person reads.
+`--fields a,b` narrows a compact answer to the fields you name. Put `HIRIFY_DEBUG=1` in front of a
+command when you need the server's own reply to attach to a bug report.
 
-When no command fits, `hirify api call <path>` sends a request to the agent API as you write it and
-prints the answer as it comes back, so a gap here is not a dead end.
+When no command fits, `hirify api call <capability>` invokes any capability Hirify lists in its
+manifest and prints the answer, so a gap here is a detour, not a dead end. Inputs go in `--data` as a
+JSON object; `--json` gives the raw answer.
 
 The same API is available as an MCP server at `https://api.hirify.me/api/mcp`, with the same
 account. Use whichever your agent supports.
