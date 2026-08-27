@@ -15,7 +15,8 @@ npx hirify-cli login
 ```
 
 Your browser opens, you confirm access on hirify.me, and the terminal continues on its own.
-Nothing to copy back.
+Nothing to copy back. Running `hirify login` again keeps the current sign-in; use
+`hirify login --force` only when you need to switch accounts or approve changed permissions.
 
 ```bash
 npx hirify-cli intro

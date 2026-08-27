@@ -66,7 +66,7 @@ const HELP = `hirify - job search for AI agents
 
   hirify intro                    what this can do, and in what order
 
-  hirify login                    sign in through your browser
+  hirify login                    sign in through your browser       [--force]
   hirify logout                   sign out on this computer
   hirify account show             your plan and allowances
 
@@ -592,7 +592,14 @@ async function startCallbackServer() {
     })
   })
 
-  return { port: server.address().port, received, close: () => server.close() }
+  return {
+    port: server.address().port,
+    received,
+    close: () => {
+      server.close()
+      server.closeIdleConnections?.()
+    },
+  }
 }
 
 /**
@@ -648,6 +655,19 @@ function openBrowser(url) {
 
 async function cmdLogin(args) {
   const noBrowser = args.includes('--no-browser')
+  const force = args.includes('--force')
+  const current = readSession()
+
+  if (!force && current?.kind === 'oauth') {
+    if (current.expires_at && current.expires_at - 60 <= now() && current.refresh_token) {
+      await refreshSession(current)
+    }
+    console.log('Already signed in. Use `hirify login --force` to sign in again.')
+    await cmdAccountShow()
+    console.log('\nRules for your agent: npx skills add hirifyme/hirify-cli')
+    return
+  }
+
   const endpoints = await discover()
 
   let listener
@@ -701,8 +721,12 @@ async function cmdLogin(args) {
   if (!opened) console.log(`\n${authUrl}\n`)
   else console.log(`If it did not open, use this link:\n${authUrl}`)
 
-  const timeout = new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), LOGIN_TIMEOUT_MS))
+  let timeoutId
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve({ timedOut: true }), LOGIN_TIMEOUT_MS)
+  })
   const answer = await Promise.race([listener.received, timeout])
+  clearTimeout(timeoutId)
   listener.close()
 
   if (answer.timedOut) {
