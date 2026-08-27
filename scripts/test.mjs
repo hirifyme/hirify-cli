@@ -16,6 +16,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'hirify.js')
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 // A throwaway config directory for the whole run. `logout` deletes the stored sign-in, and
 // a test that reached the real one would sign the person running the suite out of Hirify.
@@ -583,6 +584,18 @@ test('everything that ships is English', async () => {
     const dashes = text.match(/[\u2014\u2013]/g)
     assert.equal(dashes, null, `${file} carries a long dash`)
   }
+})
+
+test('the npm package name and install instructions stay aligned', () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const cli = readFileSync(CLI, 'utf8')
+
+  assert.equal(pkg.name, 'hirify-cli')
+  assert.match(readme, /npm install -g hirify-cli/)
+  assert.match(readme, /npx hirify-cli login/)
+  assert.match(cli, /npm install -g hirify-cli/)
+  assert.ok(!readme.includes('npx hirify login'))
 })
 
 test('read is in the help', async () => {

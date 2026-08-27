@@ -2,7 +2,7 @@
 // Hirify CLI: job search for AI agents.
 //
 // A thin client over `api.hirify.me/api/agent/*`, the same API the MCP server serves.
-// No dependencies: Node 18+ (built-in fetch), runs through `npx hirify`.
+// No dependencies: Node 18+ (built-in fetch), runs through `npx hirify-cli`.
 //
 // Metering, same as on the server: lists and searches are free, and three actions are
 // metered - reading a vacancy in full, revealing a contact, and applying. Repeating a read
@@ -460,7 +460,7 @@ function validateManifest(doc) {
   if (version > SUPPORTED_SCHEMA_VERSION) {
     die('this Hirify speaks a newer manifest than this CLI can read' +
       ` (its version is ${version}, this CLI reads ${SUPPORTED_SCHEMA_VERSION}).` +
-      '\n        Please update the CLI: npm install -g hirify, or run it with npx hirify.',
+      '\n        Please update the CLI: npm install -g hirify-cli, or run it with npx hirify-cli.',
       EXIT_MANIFEST_UNSUPPORTED)
   }
   if (!Array.isArray(doc.capabilities)) {

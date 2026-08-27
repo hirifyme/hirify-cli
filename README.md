@@ -5,17 +5,20 @@ account already has, search across the board, a vacancy in full, and the contact
 
 Node 18 or newer. No dependencies.
 
+Install it globally with `npm install -g hirify-cli`, or run it without installing through `npx`
+as shown below. In either case, the command is `hirify` after a global install.
+
 ## Getting started
 
 ```bash
-npx hirify login
+npx hirify-cli login
 ```
 
 Your browser opens, you confirm access on hirify.me, and the terminal continues on its own.
 Nothing to copy back.
 
 ```bash
-npx hirify intro
+npx hirify-cli intro
 ```
 
 This is the guide: what the CLI can do, in what order to do it, and which three commands use an
