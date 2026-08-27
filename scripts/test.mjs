@@ -531,7 +531,9 @@ test('intro falls back to the built-in guide when the well-known publishes none'
   for (const topic of topics) {
     assert.match(stdout, topic)
   }
-  assert.match(stdout, /Reading one vacancy in full spends one of the day's vacancy opens/)
+  assert.match(stdout, /Reading one vacancy in full spends one of the Agent API's daily vacancy opens/)
+  assert.ok(!/browser spends|shared with (the )?(site|website|browser)/i.test(stdout),
+    'the Agent API allowance is not described as a website or browser allowance')
   assert.match(stdout, /cannot be recalled/)
 })
 
@@ -557,7 +559,7 @@ test('intro still works when Hirify cannot be reached', async () => {
 
   assert.equal(code, 0)
   assert.match(stdout, /hirify login/)
-  assert.match(stdout, /Reading one vacancy in full spends one of the day's vacancy opens/)
+  assert.match(stdout, /Reading one vacancy in full spends one of the Agent API's daily vacancy opens/)
 })
 
 test('intro is reachable from the help', async () => {

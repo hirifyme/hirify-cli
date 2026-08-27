@@ -1386,9 +1386,9 @@ Read before you spend anything
 
 What costs what
   Lists and searches are free.
-  Reading one vacancy in full spends one of the day's vacancy opens. There are many of them,
-  they are the same ones a browser spends, and reading a vacancy again the same day costs
-  nothing. Read as much as you need to.
+  Reading one vacancy in full spends one of the Agent API's daily vacancy opens. There are
+  many of them, and reading a vacancy again the same day costs nothing. Read as much as you
+  need to.
   Revealing where to apply spends 1 reveal, and reveals are the scarce one. Protect that
   number: shortlist by reading, then reveal only the ones worth applying to.
   Applying has a daily allowance of its own. It is not the free step it looks like.
