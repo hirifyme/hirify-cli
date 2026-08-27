@@ -18,7 +18,7 @@ Nothing to copy back.
 npx hirify intro
 ```
 
-This is the guide: what the CLI can do, in what order to do it, and which three commands use a
+This is the guide: what the CLI can do, in what order to do it, and which three commands use an
 allowance. Commands are a noun and a verb, like `hirify vacancy read` or `hirify feed list`:
 `hirify --help` lists them all, and `hirify <noun>` lists the verbs one noun takes.
 
