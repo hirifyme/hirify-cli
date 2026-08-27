@@ -5,6 +5,9 @@ account already has, search across the board, a vacancy in full, and the contact
 
 Node 18 or newer. No dependencies.
 
+A global installation checks for a new release when it starts and updates itself before running
+the command. Set `HIRIFY_NO_AUTO_UPDATE=1` only when the installed version must stay fixed.
+
 Install it globally with `npm install -g hirify-cli`, or run it without installing through `npx`
 as shown below. In either case, the command is `hirify` after a global install.
 
