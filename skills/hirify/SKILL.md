@@ -5,17 +5,12 @@ description: Job search through Hirify - vacancies from the user's saved feeds, 
 
 # Hirify job search
 
-You work with the Hirify job board through the `hirify` CLI. This file is the working order and the
-rules that do not change; `reference.md` beside it has every command in full, and `hirify intro` is
-the server's own guide. This file is what to do and in what order.
-
-Commands are a noun and a verb: `hirify vacancy read`, `hirify feed list`. A noun on its own lists
-its verbs, and `hirify --help` lists them all.
+Use the Hirify job board through the `hirify` CLI. This file gives the working order; `reference.md`
+has every command in full, and `hirify intro` is the server's guide.
 
 ## What stays here, and what you fetch
 
-This file is installed once and sits unchanged while Hirify keeps shipping, so it holds only what
-stays true. Anything Hirify can change is fetched, never written here:
+This installed file holds only stable rules. Fetch anything Hirify can change:
 
 | What you need | Ask for it |
 |---|---|
@@ -24,22 +19,17 @@ stays true. Anything Hirify can change is fetched, never written here:
 | Rate limits, plan, abilities | `hirify account show --json` |
 | The commands that exist | `hirify --help`, `hirify <noun>` |
 
-A number or filter name written here goes stale on a deploy; name the command that answers it.
-
 ## Two rules before anything else
 
 **Lists are free. Three commands are metered, and they spend different things.**
 
-- `vacancy read` spends one of the day's vacancy opens. The allowance is generous, it is the same
-  one a browser uses, and re-reading a vacancy the same day is free. Read freely.
+- `vacancy read` spends one of the day's vacancy opens. Re-reading a vacancy the same day is free.
 - `vacancy reveal` spends 1 reveal, and reveals are scarce. When they run out, reading still works.
 - `vacancy apply` counts against a small daily allowance of its own and **cannot be taken back**. It
   sends a real application, with the user's name and profile, to a person who will read it.
 
-**`hirify account show` is the only place these numbers are true.** Read it before you spend, and
-read it again rather than carrying a figure from one answer to the next: all three move while you
-work, and two are shared with what the user does on the site. Never state what is left from memory,
-and never plan a batch on a number you are not currently looking at.
+**`hirify account show` is the only place these numbers are true.** Read it before spending; never
+state what is left from memory or plan a batch on a stale figure.
 
 **Ask the user before every apply, and before anything that changes their account.** Reading needs
 no permission. Sending, saving and configuring do.
@@ -47,13 +37,13 @@ no permission. Sending, saving and configuring do.
 ## Working order
 
 ```bash
-hirify account show                  # plan and remaining reveals: start here
-hirify feed list                     # the user's saved feeds, which are their own filters
-hirify feed show <id>                # vacancies from a feed: the best source
-hirify vacancy search "senior go"    # when no feed fits, plus any filter the site can express
-hirify vacancy read <slug>           # the whole vacancy, with its text: this is how you judge fit
-hirify vacancy reveal <slug>         # where to apply: spends 1 reveal
-hirify vacancy apply <slug>          # apply on Hirify: ask first
+hirify account show
+hirify feed list
+hirify feed show <id>
+hirify vacancy search "senior go"
+hirify vacancy read <slug>
+hirify vacancy reveal <slug>
+hirify vacancy apply <slug>
 ```
 
 1. `hirify account show` before revealing anything.
@@ -64,19 +54,21 @@ hirify vacancy apply <slug>          # apply on Hirify: ask first
 5. `hirify vacancy reveal` only what still fits after reading. A reveal spent at random is spent.
 6. Apply only after the user says yes, and read the rules below first.
 
-`hirify vacancy read` also tells you which of the two ways to apply the vacancy takes, so you do not
-have to work it out or find out from a refusal.
-
 ## Searching
 
 `vacancy search` takes a phrase and any criterion the site's filter form can express, passed as an
 option under its own name. `--limit` sets the page size and `--page` moves through pages; those two
 are the CLI's own, not filters.
 
-**`hirify filter guide` is the vocabulary, and the only source for it.** Do not guess criterion
-names or values: an unknown one narrows nothing, and a misspelt value returns an empty list that
-looks like an honest "nothing matches". If a server does not serve the guide, it says so; then ask
-the user what to filter on.
+**`hirify filter guide` is the method and vocabulary, and the only source for either.** Do not guess
+criterion names or values. The final search refuses an unknown criterion, while a misspelt value
+can return an empty list that looks like an honest "nothing matches". If a server does not serve
+the guide, it says so; then ask the user what to filter on.
+
+1. Read `hirify filter guide` and build a draft from the user's request or profile.
+2. Run `hirify api call filters.preview --data '{"filters":{...},"mode":"compact","per_page":20}'`.
+3. Inspect cards and `meta.total`; refine and preview again if they are empty, broad or irrelevant.
+4. Run `hirify vacancy search` with the validated criteria.
 
 ## Applying
 

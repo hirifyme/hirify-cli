@@ -41,10 +41,9 @@ answers `429` and names the seconds to wait. The numbers are the server's and ch
 file: `hirify account show --json`, block `limits`.
 
 Three budgets run out, and they are separate. Vacancy opens are the allowance `vacancy read` draws
-on: it is shared with the site, so a vacancy the user opened in a browser today costs nothing here,
-and it is sized so that reading is not something to ration. Reveals are the scarce one.
-Applications have a daily allowance of their own - `vacancy apply` is not the free step it looks
-like. All three are in `hirify account show`, and in `hirify account show --json` under
+on. Reveals are the scarce one. Applications have a daily allowance of their own - `vacancy apply`
+is not the free step it looks like. All three are in `hirify account show`, and in
+`hirify account show --json` under
 `quota.read`, `quota.reveal` and `quota.apply`.
 
 **No number for any of them is written in this file.** Each block carries `limit`, `used` and
@@ -84,9 +83,9 @@ behind. `--limit` is the page size and arrives as the API's `per_page`; `--json`
 is never sent. An option repeated is joined with a comma, which is how the site sends a criterion
 with several values.
 
-**The criteria come from `hirify filter guide`, and only from there.** Do not guess names or
-values. An unknown criterion is not refused, it narrows nothing, and a misspelt value returns an
-empty list that looks like an honest answer.
+**The criteria and the method come from `hirify filter guide`, and only from there.** Do not guess
+names or values. The final search refuses an unknown criterion, while a misspelt value can return
+an empty list that looks like an honest answer.
 
 Both `feed show` and `vacancy search` page with `--page N`. The last line of a list says which page
 you are on and offers the next one when there may be another.
@@ -116,6 +115,16 @@ The server derives it from the same source the site's own search reads, so it ca
 the search. That is the whole point: nothing in this package writes filter names down, because a
 list written here goes stale silently and an agent acts on it without knowing.
 
+The guide requires a preview before a filter is used. For the CLI, invoke the preview capability
+through the generic command:
+
+```bash
+hirify api call filters.preview --data '{"filters":{"search":"product manager"},"mode":"compact","per_page":20}'
+```
+
+Inspect the cards and `meta.total`, refine when needed, and only then run `hirify vacancy search`
+with the same criteria. Preview and search use the same search implementation.
+
 `--json` gives `{"guide": "<text>"}`. The text is written for a model to read, so pass it through
 rather than summarising it.
 
@@ -133,8 +142,7 @@ posted, the page address, and the description as text. This is the command that 
 is deliberately cheap.
 
 It costs one vacancy open from the daily allowance, and the same vacancy read again the same day
-costs nothing. The allowance is shared with the site, so a vacancy the user already opened in a
-browser is already paid for. The output states whether an open was used and how many are left.
+costs nothing. The output states whether an open was used and how many are left.
 
 The last line before that says which way to apply:
 

@@ -806,6 +806,21 @@ test('filter guide --json hands over the server payload', async () => {
   assert.deepEqual(JSON.parse(stdout), { guide: GUIDE })
 })
 
+test('the installed skill requires guide, preview, refinement, then final search', () => {
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const skill = readFileSync(join(root, 'skills/hirify/SKILL.md'), 'utf8')
+
+  const guide = skill.indexOf('Read `hirify filter guide`')
+  const preview = skill.indexOf('hirify api call filters.preview', guide)
+  const refine = skill.indexOf('refine and preview again', preview)
+  const search = skill.indexOf('Run `hirify vacancy search`', refine)
+
+  assert.ok(guide !== -1, 'the search workflow starts from the server guide')
+  assert.ok(preview > guide, 'preview follows the guide')
+  assert.ok(refine > preview, 'the skill checks and refines the preview')
+  assert.ok(search > refine, 'the final search follows a validated preview')
+})
+
 test('a server without the guide is told apart from a mistake in the command', async () => {
   // What production answers today. "not found (404)" would read as a bad command and send
   // someone looking for a typo in a command that has no arguments to get wrong.

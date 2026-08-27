@@ -10,11 +10,6 @@
 // this file: `hirify account show` reports what the server has left, and that is the only
 // place any of them is true.
 //
-// `quota.apply` is reported by the server but, as of 25.08, nothing on the server decrements
-// it (`DailyQuotaService::tryConsume` is wired to no caller on `origin/main`). So the texts
-// here say applying COUNTS AGAINST an allowance rather than that it spends one: the ceiling
-// is declared and published, and the day a gate lands the wording is already right.
-
 import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -73,7 +68,7 @@ const HELP = `hirify - job search for AI agents
 
   hirify login                    sign in through your browser
   hirify logout                   sign out on this computer
-  hirify account show             your plan and both allowances
+  hirify account show             your plan and allowances
 
   hirify vacancy search <query>   search the board          [--limit N] [--page N]
   hirify vacancy read <slug>      one vacancy in full, with its text
@@ -1008,8 +1003,7 @@ function detailRows(pairs) {
  * agent shortlists with, so it is deliberately the cheap one: it counts against the day's
  * vacancy opens, which is a generous allowance, and not against the reveal budget.
  *
- * The same vacancy read twice in a day costs nothing the second time, and the allowance is
- * shared with the site, so a vacancy opened in a browser is already paid for.
+ * The same vacancy read twice in a day costs nothing the second time.
  */
 async function cmdVacancyRead(args, words) {
   const [slug] = words
@@ -1361,7 +1355,7 @@ Start with what the account already has
   Most people who use Hirify have saved a filter or two on the site. Those are feeds, and they
   are the best place to start, because someone has already said in them what they want.
 
-    hirify account show          the plan, and both allowances
+    hirify account show          the plan and allowances
     hirify feed list             what this account has saved
     hirify feed show 31          the vacancies in one of them
 

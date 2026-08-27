@@ -18,7 +18,7 @@ Nothing to copy back.
 npx hirify intro
 ```
 
-This is the guide: what the CLI can do, in what order to do it, and which two commands spend an
+This is the guide: what the CLI can do, in what order to do it, and which three commands use a
 allowance. Commands are a noun and a verb, like `hirify vacancy read` or `hirify feed list`:
 `hirify --help` lists them all, and `hirify <noun>` lists the verbs one noun takes.
 
@@ -43,8 +43,10 @@ computer.
 
 ## Everything else
 
-`hirify filter guide` prints what search can filter on. It comes from the server, so it is current
-by construction; nothing about filters is written into this package.
+`hirify filter guide` explains how to turn a request into a search filter and which criteria and
+values are available. It comes from the server, so it stays current as search changes. The guide
+requires a compact preview before the final search, so the agent can correct an empty or irrelevant
+filter before relying on it.
 
 Add `--json` to any command for the server's answer as JSON instead of the text a person reads.
 `--fields a,b` narrows a compact answer to the fields you name. Put `HIRIFY_DEBUG=1` in front of a
