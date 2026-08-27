@@ -15,7 +15,7 @@ import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { randomBytes, createHash } from 'node:crypto'
 
 const API = process.env.HIRIFY_API || 'https://api.hirify.me'
@@ -61,10 +61,14 @@ const VERSION = (() => {
   }
 })()
 const USER_AGENT = `hirify-cli/${VERSION}`
+const PACKAGE_NAME = 'hirify-cli'
+const PACKAGE_LATEST = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`
+const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 
 const HELP = `hirify - job search for AI agents
 
   hirify intro                    what this can do, and in what order
+  hirify version                  installed version
 
   hirify login                    sign in through your browser       [--force]
   hirify logout                   sign out on this computer
@@ -113,6 +117,88 @@ const EXIT_ERROR = 1
 const EXIT_MANIFEST_UNSUPPORTED = 2
 
 const die = (msg, code = EXIT_ERROR) => { console.error(`hirify: ${msg}`); process.exit(code) }
+
+/** Compare the public numeric part of two npm versions without adding a dependency. */
+function newerVersion(candidate, current) {
+  const parts = (value) => {
+    const match = String(value).match(/^(\d+)\.(\d+)\.(\d+)(?:-|$)/)
+    return match ? match.slice(1).map(Number) : null
+  }
+  const next = parts(candidate)
+  const installed = parts(current)
+  if (!next || !installed) return false
+  for (let i = 0; i < 3; i++) {
+    if (next[i] !== installed[i]) return next[i] > installed[i]
+  }
+  return false
+}
+
+/**
+ * A package launched from npx already follows the requested npm version. Only a global
+ * installation is ours to update: local project dependencies and the npx cache must not be
+ * changed behind their owner. `npm root -g` is asked only when this file is under node_modules,
+ * so a checkout and the test suite take no extra process or network trip.
+ */
+function isGlobalInstall() {
+  const script = fileURLToPath(import.meta.url)
+  if (!script.includes(`${join('node_modules', PACKAGE_NAME)}`)) return false
+  try {
+    const root = execFileSync(NPM, ['root', '-g'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    }).trim()
+    return script.startsWith(join(root, PACKAGE_NAME) + '/') || script.startsWith(join(root, PACKAGE_NAME) + '\\')
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Update a global installation before running the requested command. A failed registry check is
+ * silent because job search must keep working offline. A failed install leaves one exact recovery
+ * command and then continues with the installed version.
+ */
+async function autoUpdate() {
+  if (process.env.HIRIFY_NO_AUTO_UPDATE === '1' || !isGlobalInstall()) return false
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 2000)
+  let latest
+  try {
+    const response = await fetch(PACKAGE_LATEST, {
+      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+      signal: controller.signal,
+    })
+    if (!response.ok) return false
+    latest = (await response.json())?.version
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timeout)
+  }
+
+  if (!newerVersion(latest, VERSION)) return false
+
+  console.error(`Updating Hirify CLI from ${VERSION} to ${latest}...`)
+  const update = spawnSync(NPM, ['install', '-g', `${PACKAGE_NAME}@latest`], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 120000,
+  })
+
+  if (update.status !== 0) {
+    console.error(`Hirify CLI ${latest} is available. Automatic update could not complete.`)
+    console.error(`Run: npm install -g ${PACKAGE_NAME}@latest`)
+    return false
+  }
+
+  console.error(`Hirify CLI updated to ${latest}.`)
+  const rerun = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
+    stdio: 'inherit',
+  })
+  process.exit(rerun.status ?? EXIT_ERROR)
+}
 
 // Options that stand on their own. Everything else takes the next word as its value, and
 // that rule is what lets `search` carry a filter the CLI has never heard of: the list of
@@ -828,6 +914,10 @@ function cmdLogout() {
   console.log(forgetSession()
     ? 'Signed out on this computer.'
     : 'Nobody is signed in here.')
+}
+
+function cmdVersion() {
+  console.log(VERSION)
 }
 
 // ── commands ───────────────────────────────────────────────────────────────
@@ -1648,7 +1738,7 @@ function cmdSkill() {
 // Commands that are not something you do to a thing. Signing in is not an operation on a
 // vacancy or a feed, and `intro` is the first thing anyone runs, so it stays one word.
 const PLAIN = {
-  intro: cmdIntro, skill: cmdSkill,
+  intro: cmdIntro, skill: cmdSkill, version: cmdVersion,
   login: cmdLogin, logout: cmdLogout, auth: cmdAuth,
 }
 
@@ -1666,6 +1756,8 @@ const NOUNS = {
 }
 
 const [noun, ...args] = process.argv.slice(2)
+
+await autoUpdate()
 
 if (!noun || noun === '--help' || noun === '-h' || noun === 'help') { console.log(HELP); process.exit(EXIT_OK) }
 
