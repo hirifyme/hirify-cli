@@ -965,6 +965,21 @@ test('no shipped text states what a budget is worth in numbers', async () => {
   }
 })
 
+test('the CLI knows only Agent API allowances', async () => {
+  const { readFileSync } = await import('node:fs')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+  const files = ['bin/hirify.js', 'skills/hirify/SKILL.md', 'skills/hirify/reference.md', 'README.md']
+
+  for (const file of files) {
+    const text = readFileSync(join(root, file), 'utf8')
+    const sharedLimit = text.match(/(?:site|website|browser)[^\n]{0,80}(?:allowance|budget|quota|daily limit)|(?:allowance|budget|quota|daily limit)[^\n]{0,80}(?:site|website|browser)/i)
+    const siteConfig = text.match(/\b(?:SECURITY_|HONEYPOT_|SITE_DAILY_|ORIGINAL_TEXT_DAILY_)[A-Z0-9_]*\b/)
+
+    assert.equal(sharedLimit, null, `${file} ties an Agent API allowance to the site: ${sharedLimit?.[0]}`)
+    assert.equal(siteConfig, null, `${file} carries a site security configuration key: ${siteConfig?.[0]}`)
+  }
+})
+
 // ── the manifest: the CLI learns operations, it does not carry them ─────────
 // The CLI holds no agent operation path of its own. It learns the manifest URL from the
 // public well-known document, fetches the manifest, and every command finds its capability
