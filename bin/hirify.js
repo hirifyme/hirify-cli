@@ -271,13 +271,72 @@ const options = (args) => {
 const count = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null)
 
 const out = (data, text) => {
-  if (process.argv.includes('--json')) console.log(JSON.stringify(data, null, 2))
-  else text()
+  if (process.argv.includes('--json')) {
+    // --json hands over the whole envelope, so a `meta.notice` on it travels structured and
+    // untouched. The human notice below is only for text mode.
+    console.log(JSON.stringify(data, null, 2))
+    return
+  }
+  text()
+  printNotice(data?.meta?.notice)
+}
+
+/**
+ * Print a structured notice the server attached to a successful answer (`meta.notice`). The
+ * call still succeeded, so this comes after the useful result, not in place of it. The CLI
+ * shows the text the server wrote and reads nothing into the policy behind it: it knows the
+ * notice object, not what produced it. No notice, or one with no message, prints nothing.
+ */
+function printNotice(notice) {
+  const message = typeof notice?.message === 'string' ? notice.message.trim() : ''
+  if (!message) return
+  console.log(`\nNotice: ${message}`)
 }
 
 // Text our own server wrote for the agent to read: application rules, address rejections.
 // Passing it through beats paraphrasing, because paraphrasing drifts from the real rule.
 const serverMessage = (body) => (typeof body?.message === 'string' && body.message ? body.message : null)
+
+/**
+ * The one-line report for a policy restriction: a canonical 403 that names itself
+ * `access_restricted`. It is kept apart from the quota and rate-limit walls on purpose,
+ * because those clear on their own and this one does not. The CLI states what the server
+ * sent - the message it wrote, when the restriction lifts, where to ask for a review - and
+ * adds no rule of its own about why it was applied.
+ */
+function accessRestrictedMessage(body) {
+  const err = (body && typeof body.error === 'object' && body.error) || {}
+  const line = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  const parts = [line(err.message) || line(body?.message) || 'access on this account is restricted (403).']
+  const until = line(err.restricted_until)
+  if (until) parts.push(`It stays in place until ${until}.`)
+  const appeal = line(err.appeal_url)
+  if (appeal) parts.push(`To ask us to look at it again: ${appeal}`)
+  return parts.join('\n        ')
+}
+
+/**
+ * The report for a blocking notice: a canonical 409 that names itself `action_required`.
+ * Unlike a `meta.notice` on a success, this one stands in place of the answer - the server is
+ * holding the result until the person confirms - so the CLI shows the text the server wrote and
+ * the one command that clears it, and reads nothing into the policy behind it. That command is
+ * the acknowledgement capability the server lists in its manifest, reached the same way as any
+ * other, so no route to it is written here. It carries the notice's own id and its first
+ * advertised action, both as the server sent them, so the printed line runs as it stands.
+ */
+function actionRequiredMessage(body) {
+  const notice = (body && typeof body.error === 'object' && body.error && typeof body.error.notice === 'object' && body.error.notice) || {}
+  const line = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  const parts = [line(notice.message) || 'this needs your confirmation before it can go ahead (409).']
+
+  const id = line(notice.id)
+  const action = Array.isArray(notice.actions) ? notice.actions.map(line).find(Boolean) : null
+  const call = 'hirify api call security.notices.ack'
+  parts.push(id && action
+    ? `To continue, acknowledge this notice: ${call} --data '${JSON.stringify({ id, action })}'`
+    : `To continue, acknowledge this notice: ${call}`)
+  return parts.join('\n        ')
+}
 
 const b64url = (buf) => buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const now = () => Math.floor(Date.now() / 1000)
@@ -382,6 +441,27 @@ async function api(path, { method = 'GET', payload = null, allow = [], raw = fal
       // Not JSON. The text is handed over as it came rather than thrown away.
     }
     return { status: res.status, body, text }
+  }
+
+  // A policy restriction is a canonical 403 that names itself `access_restricted`. It is not a
+  // used-up allowance and not a rate limit, and retrying cannot lift it: the CLI reports it once
+  // and never retries. Checked ahead of `allow` so a caller that reads its own 403s still cannot
+  // take this one for an ordinary refusal. The clone leaves the body readable for the paths below.
+  if (res.status === 403) {
+    const restriction = await res.clone().json().catch(() => null)
+    if (restriction?.error?.code === 'access_restricted') die(accessRestrictedMessage(restriction))
+  }
+
+  // A blocking notice is a canonical 409 that names itself `action_required`. Unlike a
+  // `meta.notice` on a success, it stands in place of the answer: the server is holding the
+  // result until the person acknowledges the notice, so the CLI reports it, exits unsuccessfully,
+  // and never retries - retrying cannot clear it. Checked ahead of `allow`, like the restriction
+  // above, so a caller that reads its own 409s cannot take this one for an ordinary conflict; a
+  // 409 without this code is left to the handling below, unchanged. The clone leaves the body
+  // readable for those paths.
+  if (res.status === 409) {
+    const blocked = await res.clone().json().catch(() => null)
+    if (blocked?.error?.code === 'action_required') die(actionRequiredMessage(blocked))
   }
 
   if (allow.includes(res.status)) {

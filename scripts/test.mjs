@@ -355,6 +355,211 @@ test('going too fast is told apart from running out', async () => {
   assert.match(stderr, /too many requests in a short time\. Please try again in 12 seconds\./)
 })
 
+// ── the server notice on a successful answer, and the policy restriction ────
+// A successful answer can carry a structured `meta.notice`: the CLI prints the useful result
+// and then the notice, and keeps the call a success. A restriction is a separate wall - a
+// canonical 403 that names itself `access_restricted` - never a quota or a rate limit, and
+// never retried. The CLI renders only what the server sent and knows nothing of the policy.
+
+const NOTICE = {
+  id: 'ntc_1',
+  code: 'site_automation_warning',
+  policy: 'site_automation',
+  message: 'Your access is not restricted. For automated workflows, use the official AI access through REST API, MCP, or CLI.',
+  actions: ['open_ai_access', 'continue_site'],
+  repeat_until: '2026-09-06T00:00:00Z',
+}
+
+const RESTRICTED = {
+  error: {
+    code: 'access_restricted',
+    policy: 'catalog_mirroring',
+    restricted_until: '2026-09-01T12:00:00Z',
+    appeal_url: 'https://hirify.me/account/appeal',
+    retryable: false,
+    message: 'Access on this account is restricted for now.',
+  },
+}
+
+// A blocking notice: a canonical 409 that names itself `action_required` and carries the whole
+// notice under `error.notice`. It stands in place of the answer until the person acknowledges it,
+// so - unlike the `meta.notice` on a success above - it must never let a useful result through and
+// never retry. In the Agent API this is the catalog_mirroring case, whose only advertised action is
+// `acknowledge`. The acknowledgement is a capability the manifest advertises, `security.notices.ack`.
+const BLOCKING = {
+  ok: false,
+  error: {
+    code: 'action_required',
+    retryable: false,
+    notice: {
+      id: 'ntc_2',
+      code: 'catalog_mirroring_warning',
+      policy: 'catalog_mirroring',
+      message: 'Please confirm how you want to continue before we return more of the catalog.',
+      actions: ['acknowledge'],
+      repeat_until: '2026-09-06T00:00:00Z',
+    },
+  },
+}
+
+test('a notice on a successful read is printed after the useful result, still a success', async () => {
+  const { code, stdout } = await run(['vacancy', 'read', 'senior-go-engineer'],
+    answer(200, { ...OK_BODY, meta: { notice: NOTICE } }))
+
+  assert.equal(code, 0, 'the notice does not turn a success into a failure')
+  assert.match(stdout, /Senior Go Engineer · Acme/, 'the useful result is still emitted')
+  assert.match(stdout, /Notice: Your access is not restricted\./, 'the notice text is shown to the person')
+  assert.ok(stdout.indexOf('Notice:') > stdout.indexOf('Senior Go Engineer'),
+    'the notice comes after the useful result, not before it')
+})
+
+test('a notice rides along a list result without disturbing its pagination', async () => {
+  const { code, stdout } = await run(['vacancy', 'search', 'go'], answer(200, {
+    data: [VACANCY],
+    meta: { page: 1, per_page: 20, total: 1, last_page: 1, notice: NOTICE },
+  }))
+
+  assert.equal(code, 0)
+  assert.match(stdout, /Senior Go Engineer/, 'the list is still printed')
+  assert.match(stdout, /Notice: Your access is not restricted\./)
+  assert.ok(stdout.indexOf('Notice:') > stdout.indexOf('Senior Go Engineer'), 'the notice follows the list')
+})
+
+test('--json keeps the notice structured and does not paraphrase it', async () => {
+  const body = { ...OK_BODY, meta: { notice: NOTICE } }
+  const { code, stdout } = await run(['vacancy', 'read', 'senior-go-engineer', '--json'], answer(200, body))
+
+  assert.equal(code, 0)
+  // The whole envelope is handed over untouched: the notice stays a structured object with its
+  // own fields, so a machine reader never has to scrape the message text out of a sentence.
+  assert.deepEqual(JSON.parse(stdout), body)
+  assert.deepEqual(JSON.parse(stdout).meta.notice, NOTICE)
+  assert.ok(!/^Notice:/m.test(stdout), 'machine output carries no human notice line')
+})
+
+test('a successful answer with no notice keeps its exact prior behaviour', async () => {
+  const human = await run(['vacancy', 'read', 'senior-go-engineer'], answer(200, OK_BODY))
+  assert.equal(human.code, 0)
+  assert.ok(!human.stdout.includes('Notice:'), 'no notice, no notice line')
+
+  const json = await run(['vacancy', 'read', 'senior-go-engineer', '--json'], answer(200, OK_BODY))
+  assert.equal(json.code, 0)
+  assert.deepEqual(JSON.parse(json.stdout), OK_BODY, 'the payload is handed over exactly as before')
+})
+
+test('access_restricted is reported as a policy restriction and never retried', async () => {
+  const { code, stderr, seen } = await run(['vacancy', 'read', 'senior-go-engineer'], answer(403, RESTRICTED))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /Access on this account is restricted for now\./, 'the server message is passed on')
+  assert.match(stderr, /2026-09-01T12:00:00Z/, 'when it lifts is shown')
+  assert.match(stderr, /https:\/\/hirify\.me\/account\/appeal/, 'where to appeal is shown')
+  assert.equal(seen.length, 1, 'a policy 403 is asked once and not retried')
+  assert.ok(!/allowance|too many requests/i.test(stderr), 'a restriction is not a quota or a rate limit')
+})
+
+test('a restriction with no server message still reads distinctly and carries its fields', async () => {
+  const { code, stderr } = await run(['vacancy', 'reveal', 'senior-go-engineer'], answer(403, {
+    error: { code: 'access_restricted', policy: 'contact_breadth', restricted_until: '2026-09-02T00:00:00Z', retryable: false },
+  }))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /access on this account is restricted \(403\)/i)
+  assert.match(stderr, /2026-09-02T00:00:00Z/)
+  assert.ok(!/appeal/i.test(stderr), 'a field the server omitted is not invented')
+})
+
+test('the restriction, the quota wall and the rate-limit wall stay three different messages', async () => {
+  const restricted = await run(['vacancy', 'read', 'senior-go-engineer'], answer(403, RESTRICTED))
+  const quota = await run(['vacancy', 'read', 'senior-go-engineer'], answer(429, {
+    error: true, message: 'Rate limit exceeded.', quota: { action: 'vacancy_opens', limit: 1000, used: 1000, remaining: 0 },
+  }))
+  const rate = await run(['vacancy', 'read', 'senior-go-engineer'], () => ({
+    status: 429, body: { error: true, message: 'Too Many Attempts.' }, headers: { 'Retry-After': '12' },
+  }))
+
+  assert.match(restricted.stderr, /restricted/i)
+  assert.match(quota.stderr, /opened as many vacancies today as the daily allowance covers/)
+  assert.match(rate.stderr, /too many requests in a short time/)
+  assert.ok(!/allowance|too many requests/i.test(restricted.stderr))
+  assert.ok(!/restricted/i.test(quota.stderr) && !/restricted/i.test(rate.stderr))
+})
+
+test('a caller that reads its own 403 still cannot mistake access_restricted for its refusal', async () => {
+  const { code, stderr, seen } = await run(['webhook', 'create', 'My hook', 'https://example.com/hook'],
+    answer(403, RESTRICTED))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /Access on this account is restricted for now\./)
+  assert.ok(!/creating a delivery endpoint is not available/.test(stderr),
+    'a policy restriction is not flattened into the capability-level refusal')
+  assert.equal(seen.length, 1, 'still asked once and not retried')
+})
+
+// ── the blocking notice that stands in place of the answer ──────────────────
+// `action_required` is a 409 the useful answer never survives: the CLI stops, shows the server's
+// notice and the one command that clears it, exits unsuccessfully and never retries. A generic
+// client can skim a notice riding on a success; it cannot skim a failure that carries no result.
+
+test('action_required stops the command, prints no useful result, and points at the acknowledgement', async () => {
+  const { code, stdout, stderr, seen } = await run(['vacancy', 'read', 'senior-go-engineer'], answer(409, BLOCKING))
+
+  assert.equal(code, 1, 'a blocking notice exits unsuccessfully')
+  assert.equal(stdout, '', 'no vacancy result reaches the screen while the notice stands')
+  assert.match(stderr, /Please confirm how you want to continue before we return more of the catalog\./,
+    'the server notice is passed on unchanged')
+  // The printed acknowledgement runs as it stands: the advertised capability, resolved through the
+  // manifest, carrying the notice's own id and its advertised action, exactly as sent.
+  assert.ok(
+    stderr.includes(`To continue, acknowledge this notice: hirify api call security.notices.ack --data '{"id":"ntc_2","action":"acknowledge"}'`),
+    'the exact, runnable acknowledgement command and payload are shown')
+  assert.equal(seen.length, 1, 'a blocking 409 is asked once and never retried automatically')
+})
+
+test('a blocking action_required is not a success notice: no useful result, never exit 0', async () => {
+  // The mutation this guards against: treating `action_required` like a `meta.notice` on a success -
+  // printing the useful result and a trailing notice, exit 0. That is exactly the gap the blocking
+  // status closes, so turning it back into a success notice must fail here.
+  const { code, stdout } = await run(['vacancy', 'read', 'senior-go-engineer'], answer(409, BLOCKING))
+
+  assert.equal(code, 1, 'a blocking notice is a failure, not a success with a trailing note')
+  assert.ok(!stdout.includes('Senior Go Engineer'), 'the useful result is withheld, not printed under the notice')
+  assert.ok(!/^Notice:/m.test(stdout), 'it is not rendered as the success-path meta.notice line')
+})
+
+test('a blocking notice on the metered reveal fires ahead of the command reading its own answer', async () => {
+  const { code, stdout, stderr, seen } = await run(['vacancy', 'reveal', 'senior-go-engineer'], answer(409, BLOCKING))
+
+  assert.equal(code, 1)
+  assert.equal(stdout, '', 'no contacts are printed and no spend is implied while the notice stands')
+  assert.match(stderr, /Please confirm how you want to continue/, 'the notice is what the person sees, not a reveal refusal')
+  assert.match(stderr, /hirify api call security\.notices\.ack --data '\{"id":"ntc_2","action":"acknowledge"\}'/)
+  assert.equal(seen.length, 1, 'asked once and not retried')
+})
+
+test('api call exposes a blocking 409 envelope untouched, without a next step of ours', async () => {
+  const { code, stdout, stderr } = await run(
+    ['api', 'call', 'vacancies.read', '--data', '{"slug":"senior-go-engineer"}', '--json'],
+    answer(409, BLOCKING))
+
+  assert.equal(code, 1, 'a 4xx from api call still exits unsuccessfully')
+  assert.deepEqual(JSON.parse(stdout), BLOCKING, 'the server envelope is handed over exactly, notice and all')
+  assert.ok(!stdout.includes('hirify api call security.notices.ack'),
+    'api call renders the server contract only and adds no acknowledgement sentence of ours')
+  assert.match(stderr, /the server answered 409/, 'the refusal is noted on stderr while the envelope stays on stdout')
+})
+
+test('an ordinary 409 without the action_required code keeps its plain refusal, unchanged', async () => {
+  const { code, stdout, stderr } = await run(['vacancy', 'read', 'senior-go-engineer'], answer(409, {
+    error: { code: 'conflict', message: 'Something conflicted.' },
+  }))
+
+  assert.equal(code, 1)
+  assert.equal(stdout, '', 'still no useful result on a refusal')
+  assert.match(stderr, /that command could not be completed/, 'a plain conflict falls to the ordinary handling, unchanged')
+  assert.ok(!stderr.includes('security.notices.ack'), 'only action_required earns the acknowledgement step')
+})
+
 // ── what the rest of the CLI now says ──────────────────────────────────────
 test('me shows every budget the server reports', async () => {
   const { stdout } = await run(['account', 'show'], answer(200, {
