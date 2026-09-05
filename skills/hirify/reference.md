@@ -148,8 +148,8 @@ The last line before that says which way to apply:
 
 - `Apply on Hirify: hirify vacancy apply <slug>` - the vacancy is hosted here.
 - `Where to apply: hirify vacancy reveal <slug> (uses 1 reveal)` - it came from elsewhere, so the
-  user applies themselves. Take this from `vacancy read` rather than finding out from a refusal on
-  `vacancy apply`.
+  application goes to that destination rather than through Hirify. Take this from `vacancy read`
+  rather than finding out from a refusal on `vacancy apply`.
 
 Contacts, the apply destination and where the vacancy came from are never in this answer. That is
 what `vacancy reveal` is for.
@@ -199,8 +199,8 @@ Answers:
   where they choose to.
 - `there is no vacancy with that slug.`
 - a refusal in the server's own words, which covers archived, flagged, someone else's profile, and
-  **vacancies not hosted on Hirify**. For those, use `vacancy reveal` and let the user apply
-  themselves.
+  **vacancies not hosted on Hirify**. For those, use `vacancy reveal` and apply at the destination it
+  returns.
 - `the application could not be sent right now.` means our side failed, not the user's data.
 
 ## Saved searches and delivery
