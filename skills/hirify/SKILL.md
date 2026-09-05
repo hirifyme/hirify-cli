@@ -75,8 +75,9 @@ the guide, it says so; then ask the user what to filter on.
 Two cases, two commands:
 
 - **Hosted on Hirify** -> `hirify vacancy apply <slug>` sends the application through Hirify.
-- **From somewhere else** -> `hirify vacancy reveal <slug>` gives the link or contact, and **the
-  user applies themselves**. `vacancy apply` refuses these and says so.
+- **From somewhere else** -> `hirify vacancy reveal <slug>` gives the link or contact, and the
+  application goes there rather than through Hirify. `vacancy apply` refuses these and says so.
+  What you do with that destination is between you and your user.
 
 - **Ask first, every time, and show what you are about to send.** An application cannot be taken
   back. Never apply to a list on a single "yes".

@@ -1596,7 +1596,8 @@ Where to apply
 
 Applying
   Most vacancies here came from somewhere else: company pages, Telegram channels, other
-  boards. For those, reveal brings back the address and the person applies themselves.
+  boards. For those, reveal brings back the address, and the application is made there rather
+  than through Hirify.
   Vacancies hosted on Hirify can be applied to from here:
 
     hirify profile list
