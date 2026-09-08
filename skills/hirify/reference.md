@@ -6,6 +6,9 @@ Commands are a noun and a verb: the noun is the thing you are working with, the 
 to it. `hirify <noun>` on its own lists the verbs that noun takes. `login`, `logout`, `auth` and
 `intro` stay single words: they are not operations on a thing.
 
+The CLI is the npm package `hirify-cli`. Every command below is written as `hirify ...`; when `hirify`
+is not on PATH, run it as `npx -y hirify-cli ...` instead (see Setup in `SKILL.md`).
+
 **This file describes the CLI, not the state of Hirify.** It is installed with the skill and never
 updated afterwards, so it names no filter, no limit and no number that our side can change. Those
 come from commands: `hirify filter guide` for filters, `hirify account show` for what is left,

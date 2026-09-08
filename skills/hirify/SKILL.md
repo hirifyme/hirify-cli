@@ -8,6 +8,14 @@ description: Job search through Hirify - vacancies from the user's saved feeds, 
 Use the Hirify job board through the `hirify` CLI. This file gives the working order; `reference.md`
 has every command in full, and `hirify intro` is the server's guide.
 
+## Setup
+
+The CLI is the npm package `hirify-cli`; the command is `hirify`. It needs Node 18 or newer and
+network access to api.hirify.me. If `hirify` is not on PATH, run every command in this file as
+`npx -y hirify-cli <command>` instead: the same CLI, nothing installed. `npm install -g hirify-cli`
+puts `hirify` on PATH for good and keeps itself up to date; offer it, and run it only after the user
+says yes.
+
 ## What stays here, and what you fetch
 
 This installed file holds only stable rules. Fetch anything Hirify can change:
@@ -114,6 +122,9 @@ gives a ticket number or says there is none yet, nothing writes back, and no fix
 **The message you were given is the truth; this is a map of the kinds, not strings to match.** Every
 failure exits non-zero and writes one line to stderr. Read that line and tell the user what it says.
 
+- **`hirify: command not found`**: run the command as `npx -y hirify-cli <command>`; see Setup.
+- **"the network seems to be unavailable"**: api.hirify.me is unreachable. Sandboxed agents often run
+  with network off (Codex CLI does by default); ask the user to allow it for the session, then retry.
 - **Not signed in**: ask the user to run `hirify login` (it opens a browser and needs a person -
   never run it yourself). On a server with no browser: `hirify auth <key>`, key from
   hirify.me/account/api-access.
