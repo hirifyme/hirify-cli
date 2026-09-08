@@ -1,7 +1,6 @@
 ---
 name: hirify
 description: Job search through Hirify - vacancies from the user's saved feeds, search across the board, reading a vacancy in full, the contact to apply to, applying on Hirify, and saved searches with delivery. Use when the user asks to find jobs, look at their feeds, pick roles that fit their profile, apply, or set up alerts. Triggers - "find jobs", "what is in my feed", "where do I apply", "apply to this", "hirify".
-compatibility: Node 18 or newer, npm (for npx), and network access to api.hirify.me.
 ---
 
 # Hirify job search
@@ -11,17 +10,11 @@ has every command in full, and `hirify intro` is the server's guide.
 
 ## Setup
 
-The CLI is the npm package `hirify-cli`; the command it installs is `hirify`. It needs Node 18 or
-newer and network access to api.hirify.me. Choose one form before the first command and keep it for
-the whole session:
-
-- `hirify` is on PATH: run the commands exactly as written here.
-- It is not: run every command as `npx -y hirify-cli <command>` - the same CLI, nothing installed.
-  `hirify account show` becomes `npx -y hirify-cli account show`.
-
-`npm install -g hirify-cli` puts `hirify` on PATH for good and keeps itself up to date. Offer it when
-the user will come back to Hirify; run it only after they say yes, like anything else that changes
-their machine.
+The CLI is the npm package `hirify-cli`; the command is `hirify`. It needs Node 18 or newer and
+network access to api.hirify.me. If `hirify` is not on PATH, run every command in this file as
+`npx -y hirify-cli <command>` instead: the same CLI, nothing installed. `npm install -g hirify-cli`
+puts `hirify` on PATH for good and keeps itself up to date; offer it, and run it only after the user
+says yes.
 
 ## What stays here, and what you fetch
 
@@ -129,11 +122,9 @@ gives a ticket number or says there is none yet, nothing writes back, and no fix
 **The message you were given is the truth; this is a map of the kinds, not strings to match.** Every
 failure exits non-zero and writes one line to stderr. Read that line and tell the user what it says.
 
-- **`hirify: command not found`**: the CLI is not installed. Run the command as
-  `npx -y hirify-cli <command>` instead; see Setup.
-- **"the network seems to be unavailable"**: the CLI could not reach api.hirify.me. Sandboxed agents
-  often run commands with network turned off (Codex CLI does by default); ask the user to allow
-  network access for the session, then try again.
+- **`hirify: command not found`**: run the command as `npx -y hirify-cli <command>`; see Setup.
+- **"the network seems to be unavailable"**: api.hirify.me is unreachable. Sandboxed agents often run
+  with network off (Codex CLI does by default); ask the user to allow it for the session, then retry.
 - **Not signed in**: ask the user to run `hirify login` (it opens a browser and needs a person -
   never run it yourself). On a server with no browser: `hirify auth <key>`, key from
   hirify.me/account/api-access.
