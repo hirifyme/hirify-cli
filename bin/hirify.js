@@ -81,8 +81,8 @@ const HELP = `hirify - job search for AI agents
 
   hirify feed list                the feeds you saved on the site
   hirify feed show <id>           vacancies from one feed   [--limit N] [--page N]
-  hirify feed create <name>       save a search             [--filters JSON] [--webhook N]
-  hirify feed deliver <id>        change how a feed reaches you
+  hirify feed create <name>       save a search             [--filters JSON] [--telegram] [--webhook N]
+  hirify feed deliver <id>        change delivery           [--telegram|--no-telegram] [--webhook N|--no-webhook]
 
   hirify profile list             the profiles you can apply with
   hirify webhook list             your delivery endpoints
@@ -295,7 +295,26 @@ function printNotice(notice) {
 
 // Text our own server wrote for the agent to read: application rules, address rejections.
 // Passing it through beats paraphrasing, because paraphrasing drifts from the real rule.
-const serverMessage = (body) => (typeof body?.message === 'string' && body.message ? body.message : null)
+function serverMessage(body) {
+  const firstLine = (value) => {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const line = firstLine(item)
+        if (line) return line
+      }
+    }
+    if (value && typeof value === 'object') {
+      for (const item of Object.values(value)) {
+        const line = firstLine(item)
+        if (line) return line
+      }
+    }
+    return null
+  }
+
+  return firstLine(body?.error?.details) || firstLine(body?.error?.message) || firstLine(body?.message)
+}
 
 /**
  * The one-line report for a policy restriction: a canonical 403 that names itself
@@ -1429,7 +1448,7 @@ async function cmdFeedCreate(args, words) {
     }
   }
 
-  const payload = { name, filters }
+  const payload = { name, filters, notify_telegram: false }
   if (args.includes('--no-telegram')) payload.notify_telegram = false
   if (args.includes('--telegram')) payload.notify_telegram = true
   const webhook = flag(args, '--webhook')
@@ -1441,13 +1460,19 @@ async function cmdFeedCreate(args, words) {
   const res = await callCapability('feeds.create', { payload, allow: [201, 422] })
   if (res.status === 422) die(serverMessage(res.body) || 'the feed was not created. Please check the criteria.')
 
-  out(res.body, () => printFeedState(res.body?.data ?? {}, 'Saved.'))
+  out(res.body, () => {
+    const feed = res.body?.data ?? {}
+    printFeedState(feed, 'Saved.')
+    if (!feed.notify_telegram && !feed.webhook_endpoint_id) {
+      console.log(`To receive new matches in Telegram: hirify feed deliver ${feed.id ?? '<id>'} --telegram`)
+    }
+  })
 }
 
 /** Change where a feed is delivered, without touching what it searches for. */
 async function cmdFeedDeliver(args, words) {
   const [id] = words
-  if (!id || !/^\d+$/.test(id)) die('a feed id is required: hirify feed deliver <id> [--telegram] [--webhook <id>]')
+  if (!id || !/^\d+$/.test(id)) die('a feed id is required: hirify feed deliver <id> [--telegram|--no-telegram] [--webhook <id>|--no-webhook]')
 
   const payload = {}
   if (args.includes('--telegram')) payload.notify_telegram = true
@@ -1475,7 +1500,7 @@ function printFeedState(f, lead) {
     f.webhook_endpoint_id ? `webhook ${f.webhook_endpoint_id}` : null,
   ].filter(Boolean)
   console.log(`${lead} Feed ${f.id ?? '-'}: ${f.name || '(untitled)'}`)
-  console.log(where.length ? `Delivered to: ${where.join(' and ')}` : 'Not delivered anywhere yet.')
+  console.log(where.length ? `Delivered to: ${where.join(' and ')}` : 'Delivery is off.')
 }
 
 /** The delivery endpoints on the account. Free; creating one needs the plan. */
@@ -1803,7 +1828,7 @@ async function cmdFilterGuide() {
       '        their names have to come from someone who knows them.')
   }
 
-  const guide = typeof res.body?.guide === 'string' ? res.body.guide.trim() : ''
+  const guide = typeof res.body?.data?.guide === 'string' ? res.body.data.guide.trim() : ''
   if (!guide) die('the server answered without a guide. Please try again in a minute.')
 
   out(res.body, () => console.log(guide))

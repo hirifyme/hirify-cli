@@ -55,6 +55,9 @@ values are available. It comes from the server, so it stays current as search ch
 requires a compact preview before the final search, so the agent can correct an empty or irrelevant
 filter before relying on it.
 
+New saved searches start with delivery off. Enable Telegram explicitly with
+`hirify feed deliver <id> --telegram` after the user approves notifications.
+
 Add `--json` to any command for the server's answer as JSON instead of the text a person reads.
 `--fields a,b` narrows a compact answer to the fields you name. Put `HIRIFY_DEBUG=1` in front of a
 command when you need the server's own reply to attach to a bug report.

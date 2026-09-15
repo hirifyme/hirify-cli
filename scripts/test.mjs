@@ -684,6 +684,49 @@ test('feed with no options asks for the feed and nothing else', async () => {
   assert.deepEqual(seen, ['/api/agent/feeds/31/vacancies'])
 })
 
+test('creating a feed keeps delivery off and tells how to enable Telegram', async () => {
+  let requestBody = ''
+  const { code, stdout } = await run(
+    ['feed', 'create', 'Java', '--filters', '{"main_stack":["java"]}'],
+    (req) => {
+      req.on('data', (chunk) => { requestBody += chunk })
+      return {
+        status: 201,
+        body: { ok: true, data: { id: 42, name: 'Java', is_active: true, notify_telegram: false, webhook_endpoint_id: null }, meta: {} },
+      }
+    },
+  )
+
+  assert.equal(code, 0)
+  assert.equal(JSON.parse(requestBody).notify_telegram, false)
+  assert.match(stdout, /Delivery is off\./)
+  assert.match(stdout, /hirify feed deliver 42 --telegram/)
+})
+
+test('feed delivery help names both enabling and disabling', async () => {
+  const { code, stderr, seen } = await run(['feed', 'deliver'], answer(200, {}))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /--telegram\|--no-telegram/)
+  assert.match(stderr, /--webhook <id>\|--no-webhook/)
+  assert.deepEqual(seen, [])
+})
+
+test('feed validation prints the specific canonical detail', async () => {
+  const { code, stderr } = await run(['feed', 'create', 'Java'], answer(422, {
+    ok: false,
+    error: {
+      code: 'validation_failed',
+      message: 'Please check the criteria.',
+      details: { filters: ['Unknown filter: wibble. It was not applied.'] },
+    },
+  }))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /Unknown filter: wibble\. It was not applied\./)
+  assert.ok(!stderr.includes('Please check the criteria.'))
+})
+
 test('the page and the next one are named, and a full page offers the next', async () => {
   const { stdout } = await run(['vacancy', 'search', 'go'], answer(200, {
     data: [VACANCY, { ...VACANCY, slug: 'b' }],
@@ -1011,7 +1054,7 @@ test('a name every object inherits is not a command', async () => {
 const GUIDE = '<AVAILABLE FILTERS>\n  - grade:\n      Comma-separated: junior,middle,senior\n</AVAILABLE FILTERS>'
 
 test('filter guide asks the server and prints what it wrote', async () => {
-  const { code, stdout, seen } = await run(['filter', 'guide'], answer(200, { guide: GUIDE }))
+  const { code, stdout, seen } = await run(['filter', 'guide'], answer(200, { ok: true, data: { guide: GUIDE }, meta: {} }))
 
   assert.equal(code, 0)
   assert.deepEqual(seen, ['/api/agent/filters/guide'])
@@ -1020,10 +1063,11 @@ test('filter guide asks the server and prints what it wrote', async () => {
 })
 
 test('filter guide --json hands over the server payload', async () => {
-  const { code, stdout } = await run(['filter', 'guide', '--json'], answer(200, { guide: GUIDE }))
+  const body = { ok: true, data: { guide: GUIDE }, meta: {} }
+  const { code, stdout } = await run(['filter', 'guide', '--json'], answer(200, body))
 
   assert.equal(code, 0)
-  assert.deepEqual(JSON.parse(stdout), { guide: GUIDE })
+  assert.deepEqual(JSON.parse(stdout), body)
 })
 
 test('the installed skill requires guide, preview, refinement, then final search', () => {
@@ -1054,7 +1098,7 @@ test('a server without the guide is told apart from a mistake in the command', a
 })
 
 test('an answer with no guide in it is not printed as an empty success', async () => {
-  const { code, stderr } = await run(['filter', 'guide'], answer(200, { guide: '' }))
+  const { code, stderr } = await run(['filter', 'guide'], answer(200, { ok: true, data: { guide: '' }, meta: {} }))
 
   assert.equal(code, 1)
   assert.match(stderr, /the server answered without a guide/)

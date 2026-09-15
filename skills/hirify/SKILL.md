@@ -98,7 +98,8 @@ Two cases, two commands:
 
 ## Saved searches and delivery
 
-These change the user's account, so the same rule holds: propose, get a yes, then do it.
+These commands change the user's account, so get a yes. Creation leaves delivery off: report that,
+offer the exact `feed deliver` command, and run it only after a separate yes.
 
 ```bash
 hirify feed create "<name>" --filters '<json>'   # criteria: hirify filter guide
@@ -107,7 +108,7 @@ hirify webhook list
 hirify webhook create "<name>" <url>
 ```
 
-`--filters` takes the same criteria as the site's filter form; read `hirify filter guide` first.
+`--filters` uses the site's filter criteria; read `hirify filter guide` first.
 Creating a delivery endpoint returns a **secret shown once**: give it to the user immediately to
 store, because it signs every delivery and cannot be shown again.
 
