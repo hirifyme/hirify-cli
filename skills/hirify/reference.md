@@ -215,11 +215,15 @@ hirify webhook list
 hirify webhook create "<name>" <url>
 ```
 
-These change the user's account. Propose, get a yes, then run them.
+These change the user's account. Propose, get a yes, then run them. A new saved search has delivery
+off by default. Enabling Telegram or a webhook is a separate account change and needs a separate
+yes, even when creating the search was already approved.
 
 `--filters` takes the same criteria the site's filter form produces, as JSON, and the names come
 from `hirify filter guide`. Omitting it saves a feed with no criteria, which means "send me
 everything" and is legal.
+After creation, report that delivery is off and show the exact `feed deliver` command. Run that
+command only after the user approves delivery.
 
 `webhook create` answers with the endpoint and a **secret shown once**. Hand it to the user
 immediately and tell them to store it: it signs every delivery and cannot be shown again.
