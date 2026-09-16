@@ -14,6 +14,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { browserCandidates } from '../bin/open-browser.js'
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'hirify.js')
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -228,6 +229,15 @@ async function run(argv, reply, opts = {}) {
 }
 
 const answer = (status, body) => () => ({ status, body })
+
+// ── browser sign-in ────────────────────────────────────────────────────────
+test('Windows opens the complete OAuth URL without a command shell', () => {
+  const url = 'https://api.hirify.me/oauth/authorize?response_type=code' +
+    '&client_id=client-123&redirect_uri=http%3A%2F%2F127.0.0.1%3A62913%2Fcallback' +
+    '&state=state-456'
+
+  assert.deepEqual(browserCandidates(url, 'win32', ''), [['explorer.exe', [url]]])
+})
 
 // ── read: the card ─────────────────────────────────────────────────────────
 test('read prints the vacancy, its terms and its text', async () => {

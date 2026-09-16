@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { randomBytes, createHash } from 'node:crypto'
+import { browserCandidates } from './open-browser.js'
 
 const API = process.env.HIRIFY_API || 'https://api.hirify.me'
 // The two public well-known documents the CLI is allowed to hardcode. OAuth discovery is
@@ -816,11 +817,7 @@ function browserPage(error) {
  * appeared is not something we can know, so the link is printed either way.
  */
 function openBrowser(url) {
-  const candidates = process.env.BROWSER
-    ? [[process.env.BROWSER, [url]]]
-    : process.platform === 'darwin' ? [['open', [url]]]
-    : process.platform === 'win32' ? [['cmd', ['/c', 'start', '', url]]]
-    : [['xdg-open', [url]], ['gio', ['open', url]], ['sensible-browser', [url]], ['x-www-browser', [url]]]
+  const candidates = browserCandidates(url)
 
   const tryOne = (i) => new Promise((resolve) => {
     if (i >= candidates.length) return resolve(false)
