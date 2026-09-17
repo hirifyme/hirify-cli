@@ -14,7 +14,7 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { browserCandidates } from '../bin/open-browser.js'
+import { canOpenBrowser } from '../bin/open-browser.js'
 
 const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'hirify.js')
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -231,12 +231,23 @@ async function run(argv, reply, opts = {}) {
 const answer = (status, body) => () => ({ status, body })
 
 // ── browser sign-in ────────────────────────────────────────────────────────
-test('Windows opens the complete OAuth URL without a command shell', () => {
-  const url = 'https://api.hirify.me/oauth/authorize?response_type=code' +
-    '&client_id=client-123&redirect_uri=http%3A%2F%2F127.0.0.1%3A62913%2Fcallback' +
-    '&state=state-456'
+// Which command opens a browser is not ours to decide any more, and a test here could
+// only restate the guess it used to protect. What is ours is knowing where a browser
+// cannot appear, because there the link has to be offered as the first step instead.
+test('a browser is asked for on a desktop session', () => {
+  assert.equal(canOpenBrowser({ env: {}, platform: 'win32', isTTY: true }), true)
+  assert.equal(canOpenBrowser({ env: {}, platform: 'darwin', isTTY: true }), true)
+  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0' }, platform: 'linux', isTTY: true }), true)
+  assert.equal(canOpenBrowser({ env: { WAYLAND_DISPLAY: 'wayland-0' }, platform: 'linux', isTTY: true }), true)
+})
 
-  assert.deepEqual(browserCandidates(url, 'win32', ''), [['explorer.exe', [url]]])
+test('a browser is not asked for where nobody would see it', () => {
+  // Over SSH the browser would open on the wrong computer.
+  assert.equal(canOpenBrowser({ env: { SSH_CONNECTION: '10.0.0.1 22' }, platform: 'linux', isTTY: true }), false)
+  // A Linux session with no display has nothing to open it with.
+  assert.equal(canOpenBrowser({ env: {}, platform: 'linux', isTTY: true }), false)
+  // Output that is not a terminal is being read by a program, not by a person.
+  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0' }, platform: 'linux', isTTY: false }), false)
 })
 
 // ── read: the card ─────────────────────────────────────────────────────────

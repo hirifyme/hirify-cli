@@ -3,7 +3,7 @@
 Job search for AI agents. The [Hirify](https://hirify.me) board from the terminal: the feeds an
 account already has, search across the board, a vacancy in full, and the contact to apply to.
 
-Node 18 or newer. No dependencies.
+Node 18 or newer.
 
 A global installation checks for a new release when it starts and updates itself before running
 the command. Set `HIRIFY_NO_AUTO_UPDATE=1` only when the installed version must stay fixed.
@@ -18,8 +18,10 @@ npx hirify-cli login
 ```
 
 Your browser opens, you confirm access on hirify.me, and the terminal continues on its own.
-Nothing to copy back. Running `hirify login` again keeps the current sign-in; use
-`hirify login --force` only when you need to switch accounts or approve changed permissions.
+Nothing to copy back. The same link is printed in the terminal: if no browser opens, open it
+yourself on this computer, and the sign-in finishes the same way. Running `hirify login` again
+keeps the current sign-in; use `hirify login --force` only when you need to switch accounts or
+approve changed permissions.
 
 ```bash
 npx hirify-cli intro
@@ -37,6 +39,9 @@ This installs the rules your agent follows when it uses Hirify. It lands where y
 them, including Claude Code, Codex, Cursor and OpenCode. See [skills.sh](https://skills.sh).
 
 ## Without a browser
+
+`hirify login --no-browser` prints the sign-in link instead of opening a browser. The link still
+belongs to this computer, because the confirmation comes back to it.
 
 On CI or a server, use a key from [your account](https://hirify.me/account/api-access):
 

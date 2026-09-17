@@ -15,9 +15,9 @@ import { homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createServer } from 'node:http'
-import { execFileSync, spawn, spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { randomBytes, createHash } from 'node:crypto'
-import { browserCandidates } from './open-browser.js'
+import { canOpenBrowser, openBrowser } from './open-browser.js'
 
 const API = process.env.HIRIFY_API || 'https://api.hirify.me'
 // The two public well-known documents the CLI is allowed to hardcode. OAuth discovery is
@@ -65,13 +65,17 @@ const USER_AGENT = `hirify-cli/${VERSION}`
 const PACKAGE_NAME = 'hirify-cli'
 const PACKAGE_LATEST = `https://registry.npmjs.org/${PACKAGE_NAME}/latest`
 const NPM = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+// npm on Windows is a .cmd file, and Node refuses to start one without a shell. Without
+// this the update check throws, the throw is swallowed below, and a Windows installation
+// quietly never updates and never says so.
+const NPM_SPAWN = process.platform === 'win32' ? { shell: true } : {}
 
 const HELP = `hirify - job search for AI agents
 
   hirify intro                    what this can do, and in what order
   hirify version                  installed version
 
-  hirify login                    sign in through your browser       [--force]
+  hirify login                    sign in through your browser       [--force] [--no-browser]
   hirify logout                   sign out on this computer
   hirify account show             your plan and allowances
 
@@ -148,6 +152,7 @@ function isGlobalInstall() {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 2000,
+      ...NPM_SPAWN,
     }).trim()
     return script.startsWith(join(root, PACKAGE_NAME) + '/') || script.startsWith(join(root, PACKAGE_NAME) + '\\')
   } catch {
@@ -186,6 +191,7 @@ async function autoUpdate() {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 120000,
+    ...NPM_SPAWN,
   })
 
   if (update.status !== 0) {
@@ -812,29 +818,6 @@ function browserPage(error) {
 <main><h1>${title}</h1><p>${text}</p></main></html>`
 }
 
-/**
- * Open the browser. Success here means the command started: whether a window actually
- * appeared is not something we can know, so the link is printed either way.
- */
-function openBrowser(url) {
-  const candidates = browserCandidates(url)
-
-  const tryOne = (i) => new Promise((resolve) => {
-    if (i >= candidates.length) return resolve(false)
-    const [cmd, args] = candidates[i]
-    let child
-    try {
-      child = spawn(cmd, args, { stdio: 'ignore', detached: true })
-    } catch {
-      return resolve(tryOne(i + 1))
-    }
-    child.once('error', () => resolve(tryOne(i + 1)))
-    child.once('spawn', () => { child.unref(); resolve(true) })
-  })
-
-  return tryOne(0)
-}
-
 async function cmdLogin(args) {
   const noBrowser = args.includes('--no-browser')
   const force = args.includes('--force')
@@ -896,12 +879,22 @@ async function cmdLogin(args) {
     code_challenge_method: 'S256',
   })
 
-  const opened = noBrowser ? false : await openBrowser(authUrl)
-  console.log(opened
-    ? 'Opening your browser. Please confirm access on hirify.me.'
-    : 'Please open this link in your browser and confirm access:')
-  if (!opened) console.log(`\n${authUrl}\n`)
-  else console.log(`If it did not open, use this link:\n${authUrl}`)
+  // The link comes first and always. A browser we asked for may never appear, and the
+  // person who is left waiting needs the address on screen, not an apology afterwards.
+  const useBrowser = !noBrowser && canOpenBrowser()
+  console.log(useBrowser
+    ? '\nOpening Hirify in your browser. If nothing opens, use this link:'
+    : '\nOpen this link in your browser to confirm access:')
+  console.log(`\n${authUrl}\n`)
+  console.log('Waiting for you to confirm access. This sign-in stops after five minutes.')
+
+  // Nothing waits on this: the answer only decides whether one more line is owed to the
+  // person, and the browser has the whole timeout to arrive either way.
+  if (useBrowser) {
+    openBrowser(authUrl).then((opened) => {
+      if (!opened) console.log('\nThe browser did not start on this computer. Please open the link above.')
+    })
+  }
 
   let timeoutId
   const timeout = new Promise((resolve) => {
