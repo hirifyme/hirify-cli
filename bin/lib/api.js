@@ -17,7 +17,10 @@ export function validateManifest(doc, origin) {
     if (!isObject(cap) || typeof cap.id !== 'string' || !/^[a-zA-Z0-9_.-]+$/.test(cap.id) || ids.has(cap.id) || !['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'].includes(cap.method) || typeof cap.path !== 'string' || /[?#]/.test(cap.path)) throw new CliError('manifest_invalid', 'Hirify returned an invalid capability description.')
     ids.add(cap.id); trustedURL(cap.path, origin, { path: true })
     if (cap.inputs !== undefined && !isObject(cap.inputs)) throw new CliError('manifest_invalid', 'Hirify returned invalid input metadata.')
-    if (cap.inputs?.locations !== undefined && (!isObject(cap.inputs.locations) || Object.values(cap.inputs.locations).some(where => !['path', 'query', 'body'].includes(where)))) throw new CliError('manifest_invalid', 'Hirify returned invalid input locations.')
+    // Schema v1 servers serialize an empty PHP map as []; nonempty lists are still invalid.
+    const locations = cap.inputs?.locations
+    const emptyLocations = Array.isArray(locations) && locations.length === 0
+    if (locations !== undefined && !emptyLocations && (!isObject(locations) || Object.values(locations).some(where => !['path', 'query', 'body'].includes(where)))) throw new CliError('manifest_invalid', 'Hirify returned invalid input locations.')
     if (cap.inputs?.schema !== undefined && !isObject(cap.inputs.schema)) throw new CliError('manifest_invalid', 'Hirify returned an invalid input schema.')
   }
   return immutable(doc)

@@ -85,6 +85,21 @@ test('manifest remains one immutable snapshot even if the server changes method'
   let reads=0;const s=await apiFixture((_,res)=>json(res,{data:{}}),{document:()=>manifest([['test.op',++reads===1?'GET':'POST',reads===1?'/read':'/write']])})
   try {const r=await run(['api','call','test.op','--data={"v":"x"}','--json'],{api:s.url,key:'synthetic'});assert.equal(r.code,0,r.stderr);assert.equal(reads,1);assert.equal(s.requests.at(-1).method,'GET');assert.match(s.requests.at(-1).url,/\/read\?v=x/)}finally{await s.close()}
 })
+test('schema v1 empty input maps serialized as arrays do not block account reads or catalogue', async () => {
+ const document = manifest([['account.status','GET','/account']])
+ document.capabilities[0].inputs = { schema: { type: 'object', properties: [], additionalProperties: false }, locations: [] }
+ const s = await apiFixture((_, res) => json(res, { data: { plan: 'test' } }), { document })
+ try {
+  const account = await run(['account','show','--json'], { api: s.url, key: 'synthetic' })
+  assert.equal(account.code, 0, account.stderr); assert.equal(JSON.parse(account.stdout).data.plan, 'test')
+  const catalogue = await run(['capabilities','list','--json'], { api: s.url, key: 'synthetic' })
+  assert.equal(catalogue.code, 0, catalogue.stderr); assert.match(catalogue.stdout, /account.status/)
+ } finally { await s.close() }
+})
+for (const locations of [null, ['query'], [{ name: 'query' }], { name: 'header' }]) test(`nonempty invalid input locations are refused: ${JSON.stringify(locations)}`, () => {
+ const document = manifest(); document.capabilities[0].inputs = { locations }
+ assert.throws(() => validateManifest(document, 'https://api.example.test'), { code: 'manifest_invalid' })
+})
 for (const doc of [{schema_version:-1,capabilities:[]},{schema_version:1.5,capabilities:[]},manifest([['a','GET','//evil.test/path']]),manifest([['a','PUT','/a'],['a','GET','/b']]),manifest([['a','get','/a']])]) test('invalid manifest routing is refused',()=>assert.throws(()=>validateManifest(doc,'https://api.example'),{name:'CliError'}))
 test('cross-origin manifest never receives credentials',async()=>{
   const foreign=await server((_,res)=>json(res,manifest()));const s=await apiFixture((_,res)=>json(res,{}),{discovery:{manifest_url:foreign.url+'/meta'}})
