@@ -8,7 +8,7 @@ operator authorization. No CI job publishes or changes production.
 
 Use a clean branch based on public `main`, not a local branch with unrelated history. Confirm npm
 package `hirify-cli`, executable `hirify`, public source and published version before choosing the
-next version. The current refactor is `0.5.0-rc.1`, an unpublished candidate, not a claim of release.
+next version. The stable release version is `0.5.0`; publication still requires explicit authorization and artifact-specific acceptance.
 
 ```sh
 npm ci --ignore-scripts
