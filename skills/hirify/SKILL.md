@@ -8,24 +8,23 @@ description: Job search through Hirify - vacancies from the user's saved feeds, 
 Use the Hirify job board through the `hirify` CLI. This file gives the working order; `reference.md`
 has every command in full, and `hirify intro` is the server's guide.
 
-## Setup
+## Setup and automation
 
-The CLI is the npm package `hirify-cli`; the command is `hirify`. It needs Node 18 or newer and
-network access to api.hirify.me. If `hirify` is not on PATH, run every command in this file as
-`npx -y hirify-cli <command>` instead: the same CLI, nothing installed. `npm install -g hirify-cli`
-puts `hirify` on PATH for good and keeps itself up to date; offer it, and run it only after the user
-says yes.
+Package: `hirify-cli`; command: `hirify`; Node >=18. Prefer Node 22 or 24.
+Without a global install use `npx -y hirify-cli <command>` (npm may cache it).
+Offer `npm install -g hirify-cli` only with permission. Global installs can update automatically;
+for reproducible work use an exact version and `HIRIFY_NO_AUTO_UPDATE=1`.
 
-## What stays here, and what you fetch
+A person runs `hirify login` and confirms the printed link. The CLI tries a browser only when
+appropriate. Do not run login for them. `--no-browser` is manual callback login, not device flow.
+SSH needs `--callback-port` with a matching SSH local port forward. For agents, CI and containers,
+use `HIRIFY_KEY` or pipe a key to `hirify auth --stdin`; never put a key in a command, log or chat.
+`hirify auth status --json` identifies the local source. Environment keys override saved access;
+logout is local and does not unset them. Use `hirify login --force` to replace expired access.
 
-This installed file holds only stable rules. Fetch anything Hirify can change:
-
-| What you need | Ask for it |
-|---|---|
-| Filter names and their values | `hirify filter guide` |
-| Reveals, vacancy opens and applies left | `hirify account show` |
-| Rate limits, plan, abilities | `hirify account show --json` |
-| The commands that exist | `hirify --help`, `hirify <noun>` |
+Fetch mutable facts: `filter guide` for filter names/values, `account show --json` for current
+allowances and permissions, `--help` for commands, `capabilities show <id> --json` for inputs,
+effects and metering. This file supplies working rules, not a snapshot of server policy.
 
 ## Two rules before anything else
 
@@ -44,39 +43,23 @@ no permission. Sending, saving and configuring do.
 
 ## Working order
 
-```bash
-hirify account show
-hirify feed list
-hirify feed show <id>
-hirify vacancy search "senior go"
-hirify vacancy read <slug>
-hirify vacancy reveal <slug>
-hirify vacancy apply <slug>
-```
-
-1. `hirify account show` before revealing anything.
-2. Feeds first, search second. A feed is a filter the user built, so it already says what they want.
-3. Shortlist **from the cards**. They carry no contacts, and that is normal.
-4. `hirify vacancy read` the shortlist. The card is a headline; the text is where fit is decided, and
-   reading is cheap. Judging fit without reading is guessing.
-5. `hirify vacancy reveal` only what still fits after reading. A reveal spent at random is spent.
-6. Apply only after the user says yes, and read the rules below first.
+1. `hirify account show` before spending; use `feed list` and `feed show <id>` first.
+2. Search when no saved feed fits. Shortlist from cards; missing contacts are normal.
+3. `vacancy read <slug>` to assess fit from the full text rather than a headline.
+4. `vacancy reveal <slug>` only for vacancies that still fit after reading.
+5. Apply only after the person's approval and the rules below.
 
 ## Searching
 
-`vacancy search` takes a phrase and any criterion the site's filter form can express, passed as an
-option under its own name. `--limit` sets the page size and `--page` moves through pages; those two
-are the CLI's own, not filters.
+`vacancy search` takes a phrase and server-defined filter options; `--limit` and `--page` control
+pagination. Never guess criterion names or values. An empty result can mean a misspelt value.
 
-**`hirify filter guide` is the method and vocabulary, and the only source for either.** Do not guess
-criterion names or values. The final search refuses an unknown criterion, while a misspelt value
-can return an empty list that looks like an honest "nothing matches". If a server does not serve
-the guide, it says so; then ask the user what to filter on.
-
-1. Read `hirify filter guide` and build a draft from the user's request or profile.
+1. Read `hirify filter guide` and build criteria from the user's request or profile.
 2. Run `hirify api call filters.preview --data '{"filters":{...},"mode":"compact","per_page":20}'`.
-3. Inspect cards and `meta.total`; refine and preview again if they are empty, broad or irrelevant.
+3. Inspect cards and `meta.total`; refine and preview again if empty, broad or irrelevant.
 4. Run `hirify vacancy search` with the validated criteria.
+
+If the guide is unavailable, ask the user about criteria rather than guessing.
 
 ## Applying
 
@@ -112,40 +95,32 @@ hirify webhook create "<name>" <url>
 Creating a delivery endpoint returns a **secret shown once**: give it to the user immediately to
 store, because it signs every delivery and cannot be shown again.
 
-## Telling Hirify something is broken
+## Feedback and failures
 
-`hirify feedback send <bug|feature> "<title>" --body "<text>" [--vacancy <slug>]` sends a report,
-free. Ask first, send the user's words rather than your own, and report that it was passed on: it
-gives a ticket number or says there is none yet, nothing writes back, and no fix or date is promised.
+`hirify feedback send <bug|feature> "<title>" --body "<text>" [--vacancy <slug>]` is free.
+Ask first and send the user's words. Report the actual received/queued status and retain the
+reference; do not promise a reply or a fix. Keep an explicit `--idempotency-key` for deliberate
+retries when the server supports it.
 
-## When something goes wrong
+Parse `--json` success output, never human text. Use `--error-format=json` for structured stderr
+errors; do not combine it with debug if expecting one object. Exit 0 means success, 1 failure,
+2 unsupported server manifest, 130/143 interruption. Read the stable error code and message.
 
-**The message you were given is the truth; this is a map of the kinds, not strings to match.** Every
-failure exits non-zero and writes one line to stderr. Read that line and tell the user what it says.
+- `interaction_required`: ask the person to sign in or configure a key; do not wait on browser login.
+- Authentication failure: inspect `auth status`, then ask for `login --force`. Never expose a token.
+- 403: permission or plan restriction. 429: pace or a named allowance; inspect `account show`.
+- Network/TLS/proxy failure: fix connectivity or trust configuration; never disable TLS verification.
+- `outcome_unknown`: a metered action or mutation may have succeeded. Check before repeating;
+  the CLI does not automatically retry it. Do not blindly repeat apply, reveal or feedback.
+- Server validation names the bound or value to correct; use its message rather than inventing one.
 
-- **`hirify: command not found`**: run the command as `npx -y hirify-cli <command>`; see Setup.
-- **"the network seems to be unavailable"**: api.hirify.me is unreachable. Sandboxed agents often run
-  with network off (Codex CLI does by default); ask the user to allow it for the session, then retry.
-- **Not signed in**: ask the user to run `hirify login` (it opens a browser and needs a person -
-  never run it yourself). On a server with no browser: `hirify auth <key>`, key from
-  hirify.me/account/api-access.
-- **Sign-in no longer good** (401): expired or revoked. Ask the user to run `hirify login` again.
-- **No access** (403): the sign-in is missing an ability, or the plan does not cover agent access.
-  Abilities are fixed at sign-in, so a user who signed in before an ability existed signs in again.
-- **A budget or the pace** (429): a metered action is used up - reveals, vacancy opens, or applies -
-  or commands came too fast. The message names which; feeds and search keep working. What is left:
-  `hirify account show`.
-- **A refusal naming a length or a value** comes from the server: shorten what it named and send
-  again, do not argue with it or assume a bound.
-- **`hirify <noun> has no verb "..."`**: the name does not exist and the message lists the verbs that
-  noun takes. Read the list rather than guessing again.
+`hirify doctor` and `--debug` provide sanitized local diagnostics. Exclude the login URL from reports.
 
 ## When no command fits
 
-`hirify api call <capability-id> --data '<json>'` runs a capability by its id and prints the answer
-as it comes back, so a job with no named command is a detour, not a dead end. `hirify --help` and
-the server's own catalogue name the capabilities.
-
-Reach for a named command first where one exists: it says what a call costs and what a refusal means,
-and this one cannot. It will spend a reveal or send a real application just as readily, so the same
-rule holds - ask the user before anything that sends, saves or configures.
+Read `hirify capabilities list --json`, then `hirify capabilities show <id> --json`.
+Prefer a named command where available. Otherwise use
+`hirify api call <id> --data-file request.json --json --error-format=json`.
+JSON files avoid shell quoting errors; `--data-file -` reads stdin. `--cover-file` does the same for
+application text. Use `--` before literal positional values starting with a hyphen.
+Generic calls can spend allowances or mutate the account: the same consent rules apply.

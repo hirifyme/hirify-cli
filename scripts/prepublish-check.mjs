@@ -1,52 +1,24 @@
-// Publish-order guard. Runs by itself from `prepublishOnly`, before `npm publish`.
-//
-// Why: README.md ships inside the npm tarball, and its first section tells the reader to
-// run `npx skills add hirifyme/hirify-cli`. Publishing the package before the repository
-// is public hands that line to real people and sends them to a repository they cannot
-// open. So the rule is: repository first, npm second.
-//
-// This used to be an agreement written in an internal file. An agreement does not travel
-// with the package and is not attached to the publish command, so nothing enforced it.
-// This does.
-//
-// Escape hatch, when GitHub is unreachable and the publish has to happen anyway:
-//   HIRIFY_SKIP_REPO_CHECK=1 npm publish
-
-const REPO = 'hirifyme/hirify-cli'
-const fail = (msg) => { console.error(`\nhirify: publish stopped.\n${msg}\n`); process.exit(1) }
-
-if (process.env.HIRIFY_SKIP_REPO_CHECK) {
-  console.error('hirify: repository visibility check skipped through HIRIFY_SKIP_REPO_CHECK.')
-  process.exit(0)
-}
-
-// No token on purpose: what matters is exactly what an outsider sees. A private
-// repository answers an anonymous request with 404 rather than 403.
-let res
+// Publication is a separate, explicitly authorized operation. No skip switches.
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { createHash } from 'node:crypto'
+import { runProcess } from '../bin/lib/update.js'
+const root = dirname(dirname(fileURLToPath(import.meta.url)))
+const fail = message => { throw Error('Publish stopped: ' + message) }
+if (process.env.HIRIFY_PUBLISH_APPROVED !== '1') fail('explicit operator authorization is required')
+const manifest = JSON.parse(readFileSync(join(root, '.artifacts/release-manifest.json')))
+const receipt = JSON.parse(readFileSync(process.env.HIRIFY_RELEASE_RECEIPT || join(root, '.artifacts/acceptance.json')))
+const head = await runProcess('git', ['-C', root, 'rev-parse', 'HEAD'])
+const status = await runProcess('git', ['-C', root, 'status', '--porcelain'])
+const publicHead = await runProcess('git', ['-C', root, 'ls-remote', 'origin', 'refs/heads/main'])
+if (status.stdout.trim() || manifest.source_dirty || manifest.source_commit !== head.stdout.trim() || publicHead.stdout.split(/\s/)[0] !== head.stdout.trim()) fail('clean source must match the built artifact and public main')
+if (receipt.source_commit !== manifest.source_commit || receipt.sha256 !== manifest.sha256 || !['windows', 'macos', 'linux', 'browser', 'consent'].every(x => receipt.passed?.includes(x))) fail('missing artifact-specific platform/browser/consent acceptance')
+if (createHash('sha256').update(readFileSync(join(root, '.artifacts', manifest.filename))).digest('hex') !== manifest.sha256) fail('artifact hash changed')
+for (const [file, hash] of Object.entries(manifest.files)) if (createHash('sha256').update(readFileSync(join(root, file))).digest('hex') !== hash) fail('source differs from tested artifact: ' + file)
+const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 10000)
 try {
-  res = await fetch(`https://api.github.com/repos/${REPO}`, {
-    headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'hirify-prepublish-check' },
-  })
-} catch (e) {
-  fail(`Could not ask GitHub whether ${REPO} is public: ${e.message}\n` +
-    'Check the network, or repeat with HIRIFY_SKIP_REPO_CHECK=1 if you are sure of the order.')
-}
-
-if (res.status === 404) {
-  fail(`The repository ${REPO} is not public yet.\n` +
-    `The README inside this package tells people to run \`npx skills add ${REPO}\`, and that\n` +
-    'command would send them to a closed repository. Make the repository public first.')
-}
-
-if (!res.ok) {
-  fail(`GitHub answered ${res.status} when asked about ${REPO}.\n` +
-    'Try again later, or repeat with HIRIFY_SKIP_REPO_CHECK=1 if you are sure of the order.')
-}
-
-const repo = await res.json().catch(() => null)
-
-if (repo?.private !== false) {
-  fail(`GitHub did not confirm that ${REPO} is public. Make the repository public first.`)
-}
-
-console.error(`hirify: ${REPO} is public, the publish order holds.`)
+ const response = await fetch('https://api.github.com/repos/hirifyme/hirify-cli', { signal: controller.signal, redirect: 'error', headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'hirify-release-check' } })
+ if (!response.ok || (await response.json()).private !== false) fail('public repository visibility was not confirmed')
+} finally { clearTimeout(timer) }
+console.log('Publication checks passed. Publish the verified tarball, never rebuild it during release.')

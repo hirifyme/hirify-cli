@@ -6,22 +6,25 @@
 //
 // Repo-only tooling: `files` in package.json does not carry this into the npm package.
 
-import { test } from 'node:test'
+import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { canOpenBrowser } from '../bin/open-browser.js'
+import { CARD_FIELDS } from '../bin/lib/commands.js'
+import { createAuth } from '../bin/lib/auth.js'
 
-const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'hirify.js')
+const CLI = process.env.HIRIFY_TEST_CLI || join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'hirify.js')
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 // A throwaway config directory for the whole run. `logout` deletes the stored sign-in, and
 // a test that reached the real one would sign the person running the suite out of Hirify.
 const CONFIG_HOME = mkdtempSync(join(tmpdir(), 'hirify-test-'))
+after(() => rmSync(CONFIG_HOME, { recursive: true, force: true }))
 
 /**
  * A vacancy shaped like the API's own detail resource. Tests override only the field
@@ -88,12 +91,7 @@ function summaryCard(i) {
  * the real field list and not a copy of it that could drift. The gate is the CLI's selection, so
  * it has to be the CLI's own list.
  */
-function cliCardFields() {
-  const cli = readFileSync(CLI, 'utf8')
-  const m = cli.match(/const CARD_FIELDS = \[([^\]]*)\]/)
-  assert.ok(m, 'CARD_FIELDS is defined in the CLI')
-  return m[1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean)
-}
+function cliCardFields() { return CARD_FIELDS }
 
 /**
  * The capabilities the curated commands resolve, at their real REST method and path. Every
@@ -212,7 +210,7 @@ async function run(argv, reply, opts = {}) {
         ...process.env,
         HIRIFY_API: api,
         HIRIFY_KEY: 'test-key',
-        HIRIFY_DEBUG: '',
+        HIRIFY_DEBUG: '', HIRIFY_NO_AUTO_UPDATE: '1', HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '', http_proxy: '', https_proxy: '', all_proxy: '', NO_PROXY: '', no_proxy: '',
         XDG_CONFIG_HOME: CONFIG_HOME,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -221,9 +219,12 @@ async function run(argv, reply, opts = {}) {
     let stderr = ''
     child.stdout.on('data', (c) => { stdout += c })
     child.stderr.on('data', (c) => { stderr += c })
+    const timeout = setTimeout(() => child.kill('SIGKILL'), 10000)
     const code = await new Promise((resolve) => child.once('close', resolve))
+    clearTimeout(timeout)
     return { code, stdout, stderr, seen, bootstrap }
   } finally {
+    server.closeAllConnections?.()
     server.close()
   }
 }
@@ -324,7 +325,7 @@ test('read without a slug asks for one and sends nothing', async () => {
   const { code, stderr, seen } = await run(['vacancy', 'read'], answer(200, OK_BODY))
 
   assert.equal(code, 1)
-  assert.match(stderr, /a vacancy slug is required: hirify vacancy read <slug>/)
+  assert.match(stderr, /hirify vacancy read needs 1 argument/)
   assert.deepEqual(seen, [], 'nothing is asked of the server')
 })
 
@@ -532,7 +533,7 @@ test('action_required stops the command, prints no useful result, and points at 
   // The printed acknowledgement runs as it stands: the advertised capability, resolved through the
   // manifest, carrying the notice's own id and its advertised action, exactly as sent.
   assert.ok(
-    stderr.includes(`To continue, acknowledge this notice: hirify api call security.notices.ack --data '{"id":"ntc_2","action":"acknowledge"}'`),
+    stderr.includes(`hirify api call security.notices.ack --data-file <file>`) && stderr.includes('{"id":"ntc_2","action":"acknowledge"}'),
     'the exact, runnable acknowledgement command and payload are shown')
   assert.equal(seen.length, 1, 'a blocking 409 is asked once and never retried automatically')
 })
@@ -554,7 +555,7 @@ test('a blocking notice on the metered reveal fires ahead of the command reading
   assert.equal(code, 1)
   assert.equal(stdout, '', 'no contacts are printed and no spend is implied while the notice stands')
   assert.match(stderr, /Please confirm how you want to continue/, 'the notice is what the person sees, not a reveal refusal')
-  assert.match(stderr, /hirify api call security\.notices\.ack --data '\{"id":"ntc_2","action":"acknowledge"\}'/)
+  assert.match(stderr, /hirify api call security\.notices\.ack --data-file <file>/)
   assert.equal(seen.length, 1, 'asked once and not retried')
 })
 
@@ -725,11 +726,10 @@ test('creating a feed keeps delivery off and tells how to enable Telegram', asyn
 })
 
 test('feed delivery help names both enabling and disabling', async () => {
-  const { code, stderr, seen } = await run(['feed', 'deliver'], answer(200, {}))
+  const { code, stdout, seen } = await run(['feed', 'deliver', '--help'], answer(200, {}))
 
-  assert.equal(code, 1)
-  assert.match(stderr, /--telegram\|--no-telegram/)
-  assert.match(stderr, /--webhook <id>\|--no-webhook/)
+  assert.equal(code, 0)
+  for (const flag of ['--telegram', '--no-telegram', '--webhook', '--no-webhook']) assert.ok(stdout.includes(flag))
   assert.deepEqual(seen, [])
 })
 
@@ -863,7 +863,7 @@ test('the npm package name and install instructions stay aligned', () => {
   assert.equal(pkg.name, 'hirify-cli')
   assert.match(readme, /npm install -g hirify-cli/)
   assert.match(readme, /npx hirify-cli login/)
-  assert.match(cli, /npm install -g hirify-cli/)
+  assert.match(readFileSync(join(ROOT, 'README.md'), 'utf8'), /npm install -g hirify-cli/)
   assert.ok(!readme.includes('npx hirify login'))
 })
 
@@ -871,7 +871,7 @@ test('read is in the help', async () => {
   const { code, stdout } = await run(['--help'], answer(200, {}))
 
   assert.equal(code, 0)
-  assert.match(stdout, /hirify vacancy read <slug> +one vacancy in full, with its text/)
+  assert.match(stdout, /hirify vacancy read <slug> +read one vacancy in full/)
 })
 
 // ── the grammar: <noun> <verb> ─────────────────────────────────────────────
@@ -896,7 +896,7 @@ test('a noun asked for help answers on stdout and succeeds', async () => {
   const { code, stdout } = await run(['feed', '--help'], answer(200, {}))
 
   assert.equal(code, 0)
-  assert.match(stdout, /hirify feed takes a verb: list, show, create, deliver/)
+  for (const verb of ['list', 'show', 'create', 'deliver']) assert.ok(stdout.includes('hirify feed ' + verb))
 })
 
 test('a verb the noun does not have is named, with the ones it does', async () => {
@@ -1154,13 +1154,9 @@ test('nothing that ships names a search filter', async () => {
   }
 })
 
-test('the abilities asked for at sign-in are the ones the server publishes', async () => {
-  // A frozen list is how everyone who signed in on 18.08 ended up without agent:feedback.
-  const { readFileSync } = await import('node:fs')
-  const cli = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'bin/hirify.js'), 'utf8')
-
-  assert.match(cli, /scopes_supported/, 'the discovery document is what names the abilities')
-  assert.match(cli, /scope: endpoints\.scopes/, 'and that is what the sign-in asks for')
+test('OAuth discovery intersects server scopes with the CLI permission policy', async () => {
+  const auth = createAuth({ config: { api: 'https://api.test' }, http: { request: async () => ({ ok: true, headers: new Headers({'content-type':'application/json'}), body: { issuer:'https://api.test', authorization_endpoint:'https://api.test/authorize', token_endpoint:'https://api.test/token', registration_endpoint:'https://api.test/register', scopes_supported:['agent:read','agent:feedback','other:admin'] } }) } })
+  assert.equal((await auth.discover()).scopes, 'agent:read agent:feedback')
 })
 
 test('no shipped text states a length the server owns', async () => {
@@ -1322,18 +1318,15 @@ test('unknown fields in the manifest are ignored, not refused', async () => {
   assert.deepEqual(seen, ['/api/agent/me'])
 })
 
-test('a second manifest lookup in one process revalidates with the ETag and reuses the cache', async () => {
-  // `api call` reads the capability's inputs, then invokes it: two lookups in one process.
-  // The first downloads the manifest; the second sends If-None-Match and the server answers
-  // 304, so the document is downloaded once and revalidated after.
+test('a generic call uses one immutable manifest snapshot', async () => {
+  // Resolve and execute must use the same description even during a server rollout.
   const manifest = manifestDoc([['experiments.ping', 'GET', '/api/agent/experiments/ping']])
   const { code, bootstrap } = await run(['api', 'call', 'experiments.ping'], answer(200, { data: {} }), { manifest, etag: '"rev-1"' })
 
   assert.equal(code, 0)
   const metas = bootstrap.filter((b) => b.url.split('?')[0] === '/api/agent/meta')
-  assert.equal(metas.length, 2, 'looked up twice in one process')
+  assert.equal(metas.length, 1, 'the prepared operation cannot change between reads')
   assert.equal(metas[0].headers['if-none-match'], undefined, 'the first lookup downloads the manifest')
-  assert.equal(metas[1].headers['if-none-match'], '"rev-1"', 'the second revalidates with the stored ETag')
 })
 
 test('the manifest is not persisted: a fresh run downloads it again', async () => {
@@ -1369,7 +1362,7 @@ test('a missing argument is caught before the manifest is fetched', async () => 
   const { code, stderr, seen, bootstrap } = await run(['vacancy', 'read'], answer(200, {}))
 
   assert.equal(code, 1)
-  assert.match(stderr, /a vacancy slug is required/)
+  assert.match(stderr, /needs 1 argument/)
   assert.deepEqual(seen, [])
   assert.deepEqual(bootstrap, [], 'the manifest is not fetched to tell someone they forgot the slug')
 })

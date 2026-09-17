@@ -15,16 +15,23 @@ come from commands: `hirify filter guide` for filters, `hirify account show` for
 `hirify account show --json` for the plan and the limits. Where this file would have quoted one, it
 names the command instead.
 
-Add `--json` to any command to get the server's payload verbatim instead of the text below.
+Add `--json` to any command to get the server's payload with credentials redacted instead of the text below.
 `--fields a,b` narrows a compact answer to the fields you name and never adds one the answer did not
 carry. Parse `--json`; do not parse the text, it is written for a person to read.
 
 **Exit codes are stable.** `0` is success, `1` an ordinary error, and `2` means this Hirify speaks a
-newer manifest than your CLI can read - update the CLI. Every failure also writes one line to stderr
-beginning with `hirify: `. Branch on the code rather than on the message text.
+newer manifest than your CLI can read - update the CLI. Default errors write a diagnostic to stderr beginning with `hirify: `. Branch on the code rather than on the message text.
 
-Set `HIRIFY_DEBUG=1` in front of a command to also get the server's own answer on stderr. Use it
-when you need to report a problem; the normal output never contains raw payloads.
+Use `--error-format=json` for a versioned error object on stderr. Interruptions return 130/143.
+`HIRIFY_DEBUG=1` or `--debug` emits sanitized phase/reason events, not raw server bodies.
+Use `hirify doctor` for local diagnostics. Never include a sign-in URL or credential in a report.
+
+Additional commands: `auth status --json`, `doctor`, `capabilities list --json`,
+`capabilities show <id> --json`, `update --check`, `update <version>`, `update --rollback`.
+`--help` is offline and does not change access. `--timeout <seconds>` controls the command deadline.
+`--data-file <file|->`, `--cover-file <file|->` and `auth --stdin` avoid shell/history exposure.
+Files preserve quotes and Unicode. Generic mutations are never automatically retried;
+`outcome_unknown` requires checking whether the action happened before repeating it.
 
 ## Cost model
 
@@ -55,14 +62,14 @@ outlives every change to them.
 
 ## Signing in
 
-`hirify login` opens a browser and needs a person. Never run it yourself: ask the user to run it.
-It stores access in `~/.config/hirify/auth.json` (mode 600) and renews it without asking again.
-`hirify logout` forgets it. On CI or a server: `hirify auth <key>`, or `HIRIFY_KEY` in the
-environment, which wins over a stored sign-in.
-
-Permissions are fixed when the user signs in and cannot be added afterwards. A 403 naming a missing
-permission means the user signed in before that permission existed: they have to run `hirify login`
-again.
+A person runs `hirify login`, opens the printed link and confirms access. The CLI tries a browser
+only where appropriate. `--no-browser` disables launching but still needs a reachable callback;
+SSH requires `--callback-port` and a matching port forward. CI/agents should use `HIRIFY_KEY` or
+`hirify auth --stdin`. A new non-interactive browser login fails promptly unless manual mode was explicit.
+Access is stored under an absolute XDG_CONFIG_HOME or `~/.config/hirify`, with private file permissions
+and atomic writes. `auth status --json` shows its source. `logout` clears local access, not server
+access or environment keys. `HIRIFY_KEY` wins over the saved sign-in. Use `login --force` to replace
+access, including when new permissions require consent. Finish older CLI processes before migrating.
 
 ## Reading
 

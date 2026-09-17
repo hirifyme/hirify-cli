@@ -1,17 +1,26 @@
 {
   "name": "hirify-cli",
-  "version": "0.4.8",
+  "version": "0.5.0-rc.1",
   "description": "Hirify CLI for AI agents: browser sign-in, job feeds, search, reading a vacancy in full, contacts to apply to, and applying on Hirify.",
   "bin": {
     "hirify": "bin/hirify.js"
   },
   "scripts": {
-    "test": "node scripts/test.mjs",
-    "prepublishOnly": "node scripts/prepublish-check.mjs"
+    "test": "node --test scripts/test.mjs scripts/runtime.test.mjs scripts/network.test.mjs scripts/update.test.mjs scripts/storage.test.mjs",
+    "build": "node scripts/build.mjs",
+    "test:package": "node scripts/verify-package.mjs",
+    "prepublishOnly": "node scripts/prepublish-check.mjs",
+    "test:install": "node scripts/install-update-smoke.mjs"
   },
   "type": "module",
   "dependencies": {
-    "open": "^10.2.0"
+    "cross-spawn": "7.0.6",
+    "http-proxy-agent": "7.0.2",
+    "https-proxy-agent": "7.0.6",
+    "open": "10.2.0",
+    "proper-lockfile": "4.1.2",
+    "proxy-from-env": "1.1.0",
+    "semver": "7.8.5"
   },
   "engines": {
     "node": ">=18"
@@ -20,7 +29,8 @@
     "bin",
     "skills",
     "README.md",
-    "NOTICE"
+    "NOTICE",
+    "npm-shrinkwrap.json"
   ],
   "keywords": [
     "hirify",
