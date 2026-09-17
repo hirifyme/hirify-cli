@@ -13,6 +13,7 @@ import { parse, COMMANDS } from '../bin/lib/cli.js'
 import { createStore } from '../bin/lib/store.js'
 import { validateManifest } from '../bin/lib/api.js'
 import { tokenResponse } from '../bin/lib/auth.js'
+import { startCallbackServer } from '../bin/lib/loopback.js'
 import { createHttp, retryDelay } from '../bin/lib/http.js'
 import { environment, openBrowser } from '../bin/lib/browser.js'
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -64,7 +65,7 @@ test('parser accepts equals, --, flags before verbs and search passthrough witho
   assert.equal(parse(['--json', 'feed', '--page=2', 'show', '7']).name, 'feed show')
   assert.deepEqual(parse(['vacancy', 'search', '--future-filter', 'one', '--future-filter=two', 'go']).words, ['go'])
 })
-for (const args of [ ['vacancy','apply','demo','--cover','--json'], ['feed','create','demo','--filters','[]'], ['feed','deliver','7','--telegram','--no-telegram'], ['auth','--stdin','key'], ['toString'], ['constructor'], ['feed','list','--typo'], ['account','show','extra'], ['vacancy','apply','demo','--profile=9007199254740993'] ]) test(`malformed arguments have no network effects: ${args.join(' ')}`, async () => {
+for (const args of [ ['feed','deliver','1'], ['auth',''], ['account','show','--error-format='], ['vacancy','apply','demo','--cover','--json'], ['feed','create','demo','--filters','[]'], ['feed','deliver','7','--telegram','--no-telegram'], ['auth','--stdin','key'], ['toString'], ['constructor'], ['feed','list','--typo'], ['account','show','extra'], ['vacancy','apply','demo','--profile=9007199254740993'] ]) test(`malformed arguments have no network effects: ${args.join(' ')}`, async () => {
   const s = await apiFixture((_, res) => json(res, { data: [] }))
   try { const r = await run([...args, '--error-format=json'], { api: s.url, key: 'synthetic' }); assert.equal(r.code, 1); assert.equal(JSON.parse(r.stderr).error.code, 'invalid_arguments'); assert.equal(s.requests.length, 0) } finally { await s.close() }
 })
@@ -130,10 +131,11 @@ async function loginFixture({observe,accountFailure=false}={}){
     if(req.url==='/register'){callback=JSON.parse(body).redirect_uris[0];return json(res,{client_id:'synthetic-client'})}
     if(req.url==='/token'){const form=new URLSearchParams(body);pkce=createHash('sha256').update(form.get('code_verifier')).digest('base64url')===verifierChallenge;return json(res,{access_token:'synthetic-login-access',refresh_token:'synthetic-login-refresh',token_type:'Bearer',expires_in:3600})}
     return json(res,{error:'unavailable'},accountFailure?503:404)
-  });let handled=false
+  });let handled=false, observation=Promise.resolve()
   const task=launch(['login','--no-browser','--json','--error-format=json','--timeout=5'],{api:s.url,cfg,observe:(_,stderr,child)=>{
-    const found=stderr.match(/http:\/\/127\.0\.0\.1:\d+\/authorize\?[^\s]+/);if(!found||handled)return;handled=true;const u=new URL(found[0]);nonce=u.searchParams.get('state');verifierChallenge=u.searchParams.get('code_challenge');Promise.resolve(observe?observe({callback,state:nonce,child,url:u,cfg}):fetch(callback+'?code=synthetic-code&state='+nonce)).catch(()=>{})
+    const found=stderr.match(/http:\/\/127\.0\.0\.1:\d+\/authorize\?[^\s]+/);if(!found||handled)return;handled=true;const u=new URL(found[0]);nonce=u.searchParams.get('state');verifierChallenge=u.searchParams.get('code_challenge');observation=Promise.resolve(observe?observe({callback,state:nonce,child,url:u,cfg}):fetch(callback+'?code=synthetic-code&state='+nonce));observation.catch(()=>{})
   }});
+  const done=task.done;task.done=done.then(async result=>{await observation;return result})
   return {cfg,s,task,pkce:()=>pkce}
 }
 test('PKCE browser login succeeds and requests only client scopes, without optional account dependency',async()=>{
@@ -212,4 +214,33 @@ test('already signed-in login is idempotent without an interactive terminal',asy
 })
 test('browser rejects non-web schemes without starting an executable',async()=>{
  let calls=0;assert.equal((await openBrowser('javascript:alert(1)',{launch:()=>{calls++}})).code,'invalid_url');assert.equal(calls,0)
+})
+test('structured errors remain JSON when a credential matches a numeric value',async()=>{
+ const s=await apiFixture((_,res)=>json(res,{message:'failed'},401))
+ try{const r=await run(['account','show','--error-format=json'],{api:s.url,key:'1'});assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr).schema_version,1)}finally{await s.close()}
+})
+test('unexpected successful status cannot turn a feed response into success',async()=>{
+ const s=await apiFixture((_,res)=>json(res,{data:[]},201))
+ try{const r=await run(['feed','list','--error-format=json'],{api:s.url,key:'synthetic'});assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr).error.code,'protocol_error')}finally{await s.close()}
+})
+test('generic mutation server failure is an unknown result and is not retried',async()=>{
+ const s=await apiFixture((_,res)=>json(res,{error:{code:'failed'}},500),{document:manifest([['test.mutate','POST','/mutate']])})
+ try{const r=await run(['api','call','test.mutate','--error-format=json'],{api:s.url,key:'synthetic'});assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr).error.code,'outcome_unknown');assert.equal(s.requests.filter(q=>q.method==='POST').length,1)}finally{await s.close()}
+})
+test('IPv4 bind failure falls back to real IPv6 loopback',async t=>{
+ const factory=(...args)=>{const s=createServer(...args);const listen=s.listen.bind(s);s.listen=(port,host)=>{if(host==='127.0.0.1'){queueMicrotask(()=>s.emit('error',Object.assign(new Error('IPv4 disabled'),{code:'EAFNOSUPPORT'})));return s}return listen(port,host)};return s}
+ let listener
+ try{listener=await startCallbackServer({state:'synthetic-state',issuer:'https://api.example.test',timeoutMs:1000,serverFactory:factory})}catch(error){if(error.code==='callback_bind_failed'){t.skip('IPv6 unavailable on runner');return}throw error}
+ try{assert.match(listener.redirectUri,/\[::1\]/);assert.equal((await fetch(listener.redirectUri+'?code=ok&state=synthetic-state')).status,200);assert.equal((await listener.received).code,'ok')}finally{await listener.close()}
+})
+test('correlated access denial ends login without token exchange or saved credentials',async()=>{
+ const f=await loginFixture({observe:({callback,state})=>fetch(callback+'?error=access_denied&state='+state)})
+ try{const r=await f.task.done;assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr.trim().split('\n').at(-1)).error.code,'auth_denied');assert.ok(!existsSync(join(f.cfg,'hirify/auth.json')));assert.ok(!f.s.requests.some(q=>q.url==='/token'))}finally{await f.s.close()}
+})
+test('registration cannot outlive the command deadline',async()=>{
+ let s;s=await server((req,res)=>{if(req.url==='/.well-known/oauth-authorization-server')json(res,{issuer:s.url,authorization_endpoint:s.url+'/authorize',registration_endpoint:s.url+'/register',token_endpoint:s.url+'/token'})})
+ try{const start=Date.now();const r=await run(['login','--no-browser','--timeout=1','--error-format=json'],{api:s.url});assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr).error.code,'command_timeout');assert.ok(Date.now()-start<3000);assert.equal(r.killed,false);assert.ok(s.requests.some(q=>q.url==='/register'))}finally{await s.close()}
+})
+test('an unavailable exact version pin cannot silently execute another version',async()=>{
+ const r=await run(['version','--error-format=json'],{env:{HIRIFY_VERSION_PIN:'99.99.99'}});assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr).error.code,'version_pin_unavailable');assert.equal(r.stdout,'')
 })

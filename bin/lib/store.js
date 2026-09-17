@@ -1,7 +1,7 @@
 import { mkdirSync, lstatSync, readFileSync, openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import lockfile from 'proper-lockfile'
 import { CliError, aborted } from './errors.js'
 import { DEFAULT_API, serverURL } from './config.js'
@@ -15,20 +15,22 @@ function check(path, directory = false) {
   if (process.platform !== 'win32' && s.uid !== process.getuid()) throw new CliError('unsafe_storage', 'The credential location belongs to another user.')
   return s
 }
-export function makePrivate(path, directory = false) {
+export async function makePrivate(path, directory = false, signal) {
+  aborted(signal)
   check(path, directory)
   if (process.platform !== 'win32') { chmodSync(path, directory ? 0o700 : 0o600); return }
   // Set an exact DACL for the current SID; POSIX mode bits do not secure Windows files.
   const script = `$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $p=$env:HIRIFY_SECURE_PATH; $d=(Get-Item -LiteralPath $p -Force).PSIsContainer; if($d){$acl=New-Object System.Security.AccessControl.DirectorySecurity; $rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')}else{$acl=New-Object System.Security.AccessControl.FileSecurity; $rule=New-Object System.Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow')}; $acl.SetOwner($sid); $acl.SetAccessRuleProtection($true,$false); $acl.AddAccessRule($rule); Set-Acl -LiteralPath $p -AclObject $acl`
-  execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { env: { ...process.env, HIRIFY_SECURE_PATH: path }, stdio: 'ignore', timeout: 10000, windowsHide: true })
+  await new Promise((resolve, reject) => execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { env: { ...process.env, HIRIFY_SECURE_PATH: path }, signal, timeout: 10000, windowsHide: true }, error => error ? reject(signal?.aborted ? signal.reason : new CliError('storage_permissions', 'Could not set private Windows access permissions.')) : resolve()))
 }
 export function createStore(config, { signal } = {}) {
   const file = join(config.dir, 'auth.json')
   const legacy = join(config.dir, 'key')
   let compromised = false
-  function ensure() {
-    try { mkdirSync(config.dir, { recursive: true, mode: 0o700 }); makePrivate(config.dir, true) }
-    catch (e) { if (e instanceof CliError) throw e; throw new CliError('storage_unavailable', 'Could not create a private credential directory. Check its permissions.') }
+  let secured = false
+  async function ensure() {
+    try { mkdirSync(config.dir, { recursive: true, mode: 0o700 }); await makePrivate(config.dir, true, signal) }
+    catch (e) { if (signal?.aborted) throw signal.reason; if (e instanceof CliError) throw e; throw new CliError('storage_unavailable', 'Could not create a private credential directory. Check its permissions.') }
   }
   function readRaw() {
     try {
@@ -59,14 +61,14 @@ export function createStore(config, { signal } = {}) {
   }
   async function write(state) {
     if (compromised) throw new CliError('storage_lock_lost', 'The sign-in lock was lost. No credentials were committed.')
-    ensure(); check(file)
+    await ensure(); check(file)
     const temp = join(config.dir, `.auth-${randomUUID()}.tmp`)
     let fd
     try {
       fd = openSync(temp, 'wx', 0o600)
       writeFileSync(fd, JSON.stringify({ ...state, schema_version: 1 }, null, 2) + '\n')
       fsyncSync(fd); closeSync(fd); fd = undefined
-      if (process.platform === 'win32') makePrivate(temp)
+      if (process.platform === 'win32') await makePrivate(temp, false, signal)
       for (let attempt = 0; ; attempt++) {
         try { renameSync(temp, file); break }
         catch (error) { if (process.platform !== 'win32' || !['EPERM', 'EACCES', 'EBUSY'].includes(error.code) || attempt >= 4) throw error; await delay(50 * (attempt + 1), signal) }
@@ -77,7 +79,7 @@ export function createStore(config, { signal } = {}) {
     finally { if (fd !== undefined) closeSync(fd); try { unlinkSync(temp) } catch {} }
   }
   async function locked(fn) {
-    ensure(); aborted(signal)
+    await ensure(); aborted(signal)
     const lockPath = join(config.dir, '.session.lock')
     let release
     compromised = false
@@ -110,6 +112,6 @@ export function createStore(config, { signal } = {}) {
       return state.generation
     })
   }
-  function secure() { ensure(); for (const path of [file, legacy]) if (check(path)) makePrivate(path) }
+  async function secure() { if (secured) return; await ensure(); for (const path of [file, legacy]) if (check(path)) await makePrivate(path, false, signal); secured = true }
   return { file, read, readRaw, write, locked, commit, logout, beginLogin, secure }
 }

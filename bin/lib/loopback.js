@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
 import { CliError, aborted } from './errors.js'
 
-export async function startCallbackServer({ state, issuer, port = 0, signal, timeoutMs = 300000 }) {
+export async function startCallbackServer({ state, issuer, port = 0, signal, timeoutMs = 300000, serverFactory = createServer }) {
   aborted(signal)
   let settle, reject, settled = false, closePromise
   const sockets = new Set()
@@ -10,7 +10,7 @@ export async function startCallbackServer({ state, issuer, port = 0, signal, tim
   // The consumer may still be registering the public client when cancellation arrives.
   received.catch(() => {})
   let address
-  const server = createServer({ maxHeaderSize: 8192 }, (req, res) => {
+  const server = serverFactory({ maxHeaderSize: 8192 }, (req, res) => {
     const reply = (status, text, html = false) => {
       res.writeHead(status, { 'Content-Type': html ? 'text/html; charset=utf-8' : 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Security-Policy': "default-src 'none'", 'Referrer-Policy': 'no-referrer', Connection: 'close' })
       res.end(text)

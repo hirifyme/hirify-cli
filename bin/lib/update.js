@@ -34,14 +34,14 @@ export function updateDirectory(configDir, baseRoot) {
   return join(configDir, 'updates', createHash('sha256').update(real(baseRoot)).digest('hex').slice(0, 24))
 }
 function readJSON(file) { try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return null } }
-function privateDirectory(path) { mkdirSync(path, { recursive: true, mode: 0o700 }); makePrivate(path, true) }
-function atomicJSON(file, value) {
-  privateDirectory(dirname(file))
+async function privateDirectory(path, signal) { mkdirSync(path, { recursive: true, mode: 0o700 }); await makePrivate(path, true, signal) }
+async function atomicJSON(file, value, signal) {
+  await privateDirectory(dirname(file), signal)
   const temp = file + '.' + randomUUID() + '.tmp'
   let fd
   try {
     fd = openSync(temp, 'wx', 0o600); writeFileSync(fd, JSON.stringify(value, null, 2) + '\n'); fsyncSync(fd); closeSync(fd); fd = undefined
-    if (process.platform === 'win32') makePrivate(temp)
+    if (process.platform === 'win32') await makePrivate(temp, false, signal)
     renameSync(temp, file)
     if (process.platform !== 'win32') { const dir = openSync(dirname(file), 'r'); try { fsyncSync(dir) } finally { closeSync(dir) } }
   } finally { if (fd !== undefined) closeSync(fd); try { rmSync(temp) } catch {} }
@@ -55,8 +55,11 @@ export function activeInstallation(configDir, baseRoot, baseVersion, pin = '') {
   const root = join(dir, 'versions', state.version, 'node_modules', PACKAGE_NAME)
   const pkg = readJSON(join(root, 'package.json'))
   if (pkg?.name !== PACKAGE_NAME || pkg.version !== state.version || !semver.satisfies(process.version, pkg.engines?.node || '*') || !existsSync(join(root, 'bin', 'lib', 'main.js'))) return null
-  // Do not import executable state from an unprotected or foreign-owned directory.
-  for (const directory of [configDir, join(configDir, 'updates'), dir, join(dir, 'versions'), dirname(dirname(root)), root]) makePrivate(directory, true)
+  // Selection is read-only, including for offline version. ACLs are set during installation.
+  for (const directory of [configDir, join(configDir, 'updates'), dir, join(dir, 'versions'), dirname(dirname(root))]) {
+    const stat = lstatSync(directory)
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (process.platform !== 'win32' && (stat.uid !== process.getuid() || (stat.mode & 0o022)))) throw new CliError('unsafe_storage', 'The managed CLI directory must be private and owned by this user.')
+  }
   const canonical = real(root)
   if (relative(real(dir), canonical).startsWith('..') || isAbsolute(relative(real(dir), canonical)) || lstatSync(root).isSymbolicLink()) return null
   return { root, version: state.version, pinned: Boolean(state.pinned), previous: state.previous || null }
@@ -94,7 +97,7 @@ export function createUpdater({ config, http, signal, output, event, packageRoot
   async function install(target, { pin = false } = {}) {
     const owner = await installation()
     if (owner.owner !== 'npm-global') throw new CliError('update_owner_unknown', 'This installation is managed elsewhere. Update it with the package manager that installed it, or run npx hirify-cli@<version>.')
-    privateDirectory(config.dir); privateDirectory(dir); privateDirectory(join(dir, 'versions'))
+    await privateDirectory(config.dir, signal); await privateDirectory(dir, signal); await privateDirectory(join(dir, 'versions'), signal)
     let release
     while (!release) {
       aborted(signal)
@@ -106,7 +109,7 @@ export function createUpdater({ config, http, signal, output, event, packageRoot
       const previousState = readJSON(stateFile)
       const destination = join(dir, 'versions', target.version)
       if (!existsSync(destination)) {
-        staging = mkdtempSync(join(dir, '.staging-')); makePrivate(staging, true)
+        staging = mkdtempSync(join(dir, '.staging-')); await makePrivate(staging, true, signal)
         const result = await run('npm', ['install', '--prefix', staging, '--ignore-scripts', '--no-audit', '--no-fund', '--strict-ssl=true', '--registry', target.registry, `${PACKAGE_NAME}@${target.version}`], { signal, timeout: 180000, env: { ...config.env, HIRIFY_NO_AUTO_UPDATE: '1' } })
         if (result.code !== 0) throw new CliError('update_install_failed', 'The update could not be installed. The active CLI was not replaced.')
         const pkgPath = join(staging, 'node_modules', PACKAGE_NAME)
@@ -117,10 +120,14 @@ export function createUpdater({ config, http, signal, output, event, packageRoot
         if (verify.code !== 0 || verify.stdout.trim() !== target.version) throw new CliError('update_verification_failed', 'The new CLI could not start. The active CLI was not replaced.')
         renameSync(staging, destination); staging = null
       }
+      const cachedRoot = join(destination, 'node_modules', PACKAGE_NAME)
+      const cachedPackage = readJSON(join(cachedRoot, 'package.json'))
+      const cachedLock = readJSON(join(destination, 'package-lock.json'))
+      if (cachedPackage?.name !== PACKAGE_NAME || cachedPackage.version !== target.version || !semver.satisfies(process.version, cachedPackage.engines?.node || '*') || !existsSync(join(cachedRoot, 'bin', 'lib', 'main.js')) || cachedLock?.packages?.[`node_modules/${PACKAGE_NAME}`]?.integrity !== target.integrity) throw new CliError('update_verification_failed', 'The cached artifact does not match the selected release. The active CLI was not replaced.')
       aborted(signal)
       const previous = previousState?.base_version === baseVersion ? (previousState.version === target.version ? previousState.previous : previousState.version) : baseVersion
       const pinned = pin || Boolean(previousState?.version === target.version && previousState.pinned)
-      atomicJSON(stateFile, { schema_version: 1, base_version: baseVersion, version: target.version, integrity: target.integrity, pinned, previous: previous || baseVersion })
+      await atomicJSON(stateFile, { schema_version: 1, base_version: baseVersion, version: target.version, integrity: target.integrity, pinned, previous: previous || baseVersion }, signal)
       return { version: target.version, previous: previous || baseVersion, pinned }
     } finally { if (staging) rmSync(staging, { recursive: true, force: true }); await release().catch(() => {}) }
   }
@@ -137,7 +144,7 @@ export function createUpdater({ config, http, signal, output, event, packageRoot
     try {
       const current = readJSON(stateFile)
       if (current?.version !== state.version) throw new CliError('update_changed', 'Another process changed the active version. Check hirify version before retrying.')
-      atomicJSON(stateFile, { ...state, version: state.previous, previous: state.version, integrity: null, pinned: true })
+      await atomicJSON(stateFile, { ...state, version: state.previous, previous: state.version, integrity: null, pinned: true }, signal)
       return { version: state.previous, previous: state.version, pinned: true }
     } finally { await release().catch(() => {}) }
   }

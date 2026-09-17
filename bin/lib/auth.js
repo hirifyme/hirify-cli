@@ -42,7 +42,7 @@ export function createAuth({ config, store, http, signal, output, event, secrets
   }
   async function access() {
     if (config.envKey) { secrets.add(config.envKey); return config.envKey }
-    store.secure()
+    await store.secure()
     let current = remember(store.read({ allowPending: true }))
     if (!current) throw new CliError('auth_required', 'You are not signed in. Run hirify login. For CI or servers, set HIRIFY_KEY or use hirify auth --stdin.')
     if (current.kind === 'oauth' && (current.refresh_pending || (current.expires_at && current.expires_at <= Date.now() / 1000 + 60))) current = await refresh(current)

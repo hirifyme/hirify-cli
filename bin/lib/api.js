@@ -112,14 +112,15 @@ export function createApi({ config, http, auth, output }) {
     if (res.ok) {
       requireJSON(res, { mutation })
       const expected = allow.filter(code => code >= 200 && code < 300)
+      if (!expected.length && (LISTS.has(id) || (OBJECTS.has(id) && cap.method === 'GET'))) expected.push(200)
       const invalid = res.body.ok === false || (expected.length && !expected.includes(res.status)) || (LISTS.has(id) && !Array.isArray(res.body.data)) || (OBJECTS.has(id) && !isObject(res.body.data)) || (id === 'applications.apply' && !res.body.data?.application_id) || (['feeds.create', 'feeds.set_delivery'].includes(id) && !(res.body.data?.id ?? res.body.data?.feed_id)) || (id === 'webhooks.create' && !(res.body.data?.id ?? res.body.data?.endpoint_id)) || (id === 'feedback.send' && !(res.body.data?.reference || res.body.data?.ticket))
       if (invalid) throw new CliError(mutation ? 'outcome_unknown' : 'protocol_error', mutation ? 'The server did not return a valid confirmation. Check the result before trying again.' : 'The server response did not match this operation.', { status: res.status })
     }
-    lastError = res.ok ? null : responseError(res, { key: Boolean(config.envKey) })
-    if (raw) return { ...res, error: res.ok ? null : responseError(res, { key: Boolean(config.envKey) }) }
+    lastError = res.ok ? null : mutation && res.status >= 500 ? new CliError('outcome_unknown', 'The server did not confirm the result. The action may have completed; check before retrying.', { status: res.status }) : responseError(res, { key: Boolean(config.envKey) })
+    if (raw) return { ...res, error: lastError }
     if ([403, 409].includes(res.status) && ['access_restricted', 'action_required'].includes(res.body?.error?.code)) throw responseError(res)
     if (allow.includes(res.status)) return { status: res.status, body: res.body, retryAfter: res.headers.get('retry-after'), error: res.ok ? null : responseError(res) }
-    if (!res.ok) throw responseError(res, { key: Boolean(config.envKey) })
+    if (!res.ok) throw lastError
     return res.body
   }
   return { agentDiscovery, loadManifest, resolveCapability, callCapability, get lastError() { return lastError } }

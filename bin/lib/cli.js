@@ -88,9 +88,11 @@ export function parse(argv) {
     let obj; try { obj = JSON.parse(value(key)) } catch { throw new CliError('invalid_arguments', `--${key} expects JSON.`) }
     if (!obj || typeof obj !== 'object' || Array.isArray(obj)) throw new CliError('invalid_arguments', `--${key} expects a JSON object.`)
   }
-  if (value('error-format') && !['json', 'text'].includes(value('error-format'))) throw new CliError('invalid_arguments', '--error-format must be json or text.')
+  if (parsed.options.has('error-format') && !['json', 'text'].includes(value('error-format'))) throw new CliError('invalid_arguments', '--error-format must be json or text.')
   if (name === 'update' && value('rollback') && (words.length || value('check'))) throw new CliError('invalid_arguments', 'Use --rollback by itself.')
   if (name === 'auth' && Boolean(words.length) === Boolean(value('stdin'))) throw new CliError('invalid_arguments', 'Use hirify auth <key> or hirify auth --stdin.')
+  if (name === 'feed deliver' && !['telegram', 'no-telegram', 'webhook', 'no-webhook'].some(key => parsed.options.has(key))) throw new CliError('invalid_arguments', 'Choose at least one delivery setting: --telegram, --no-telegram, --webhook or --no-webhook.')
+  if (name === 'auth' && words.length && (!words[0].trim() || /[\r\n]/.test(words[0]))) throw new CliError('invalid_arguments', 'The key must be nonempty and contain no line breaks.')
   if (name === 'feedback send' && (!['bug', 'feature'].includes(words[0]) || !value('body'))) throw new CliError('invalid_arguments', 'Use hirify feedback send bug|feature <title> --body <text>.')
   const args = [...parsed.options].flatMap(([key, values]) => values.map(v => v === true ? `--${key}` : `--${key}=${v}`))
   return { name, words, args, values: Object.fromEntries([...parsed.options].map(([k, v]) => [k, v[0]])), json: Boolean(value('json')), errorJSON: value('error-format') === 'json', timeout: Number(value('timeout') || (name === 'login' ? 360 : name === 'update' ? 300 : 30)) * 1000 }
@@ -114,7 +116,8 @@ export function createOutput({ stdout = process.stdout, stderr = process.stderr,
     error: error => {
       const e = error instanceof CliError ? error : new CliError('internal_error', 'The command could not complete. Run hirify doctor and include its output when contacting support.')
       const payload = { schema_version: 1, error: { code: e.code, message: redact(e.message, [...secrets]), retryable: e.retryable, ...(e.status ? { status: e.status } : {}), ...(e.requestId ? { request_id: safeText(e.requestId).slice(0, 128) } : {}) } }
-      write(stderr, errorJSON ? JSON.stringify(payload) : `hirify: ${payload.error.message}`)
+      if (errorJSON) { if (!closed) stderr.write(JSON.stringify(payload, (_key, item) => typeof item === 'string' ? redact(item, [...secrets], false) : item) + '\n') }
+      else write(stderr, `hirify: ${payload.error.message}`)
       return e.exitCode
     },
     flush: async () => { if (!closed) await Promise.all([stdout, stderr].map(stream => new Promise(resolve => stream.write('', resolve)))); if (errors.length) throw errors[0] },

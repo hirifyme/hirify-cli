@@ -114,7 +114,7 @@ values fail before requests. `--help` and `version` do not authenticate or updat
 | 130 / 143 | SIGINT / SIGTERM cancellation on platforms delivering these signals |
 
 Common error codes include `interaction_required`, `auth_required`, `state_corrupt`,
-`issuer_mismatch`, `network_timeout`, `network_tls`, `command_timeout`, and `outcome_unknown`.
+`issuer_mismatch`, `network_timeout`, `tls_error`, `command_timeout`, and `outcome_unknown`.
 For `outcome_unknown`, check the account/server result before retrying: an application or change
 may already have happened. Metered reads and mutations are never retried automatically.
 Explicitly safe reads get bounded retries for transient network errors and 429/502/503/504.
@@ -167,7 +167,8 @@ hirify version
 
 Updates install an exact version into a private per-user directory, verify the artifact and switch
 an atomic pointer. They never overwrite executing global files. Exact versions and rollback are
-pinned. `hirify update` without a version checks latest and removes the pin when it changes version.
+pinned. An unavailable HIRIFY_VERSION_PIN fails explicitly; it never silently runs another version.
+Unset that environment pin before selecting a different version or rolling back. `hirify update` without a version checks latest and removes the pin when it changes version.
 The global npm package remains the bootstrap, so `npm list -g` can report its older version;
 `hirify version` reports the active CLI. Replacing the bootstrap with npm invalidates its old pointer.
 Old managed artifacts are retained for rollback. A checked version must support this update protocol.

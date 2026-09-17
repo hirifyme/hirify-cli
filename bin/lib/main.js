@@ -29,6 +29,7 @@ export async function main(argv = process.argv.slice(2), { baseRoot = ownRoot, b
         return await module.main(argv, { baseRoot, baseVersion, selected: true, skipUpdate })
       }
     }
+    if (config.env.HIRIFY_VERSION_PIN && config.env.HIRIFY_VERSION_PIN !== pkg.version && command.name !== 'update') throw new CliError('version_pin_unavailable', 'The pinned CLI version is not active. Run hirify update <exact-version> or install that exact npm version.')
     if (command.name === 'version') { if (command.json) output.json({ version: pkg.version }); else output.console.log(pkg.version); await output.flush(); return 0 }
     const controller = new AbortController()
     const signal = controller.signal

@@ -56,3 +56,6 @@ test('native package-manager process adapter runs npm on this platform, includin
 test('cancelled package-manager process stops within a bounded time',async()=>{
  const controller=new AbortController();const started=Date.now();const task=runProcess(process.execPath,['-e','setInterval(()=>{},1000)'],{signal:controller.signal});setTimeout(()=>controller.abort(new Error('cancelled')),100);await assert.rejects(task,/cancelled/);assert.ok(Date.now()-started<3000)
 })
+test('cached artifact integrity must still match the selected release',async()=>{
+ const f=fixture();const target=await f.updater.check();await f.updater.install(target);await assert.rejects(f.updater.install({...target,integrity:'sha512-different'}),{code:'update_verification_failed'});assert.equal(activeInstallation(f.config.dir,f.baseRoot,'0.5.0').version,'0.5.1')
+})

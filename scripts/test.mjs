@@ -843,7 +843,7 @@ test('everything that ships is English', async () => {
   // published by accident, so it is checked rather than remembered.
   const { readFileSync, readdirSync } = await import('node:fs')
   const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-  const files = ['bin/hirify.js', 'README.md', 'package.json', 'NOTICE',
+  const files = ['bin/hirify.js', ...readdirSync(join(root, 'bin/lib')).map(f => `bin/lib/${f}`), 'README.md', 'package.json', 'NOTICE',
     ...readdirSync(join(root, 'skills/hirify')).map((f) => `skills/hirify/${f}`)]
 
   for (const file of files) {
