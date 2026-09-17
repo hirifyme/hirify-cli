@@ -35,7 +35,22 @@ All actions are pinned. Keep CI logs and the artifact's SHA256 with acceptance e
 
 On **Windows** use both PowerShell and cmd.exe; on **macOS** use Terminal; on **Linux** use a desktop
 terminal and a separate headless/SSH session. Install Node22 or 24, clone the candidate commit and
-run the commands above. Do not substitute a Linux mock for native results.
+receive the **same tested tarball and release-manifest.json** in `.artifacts/` alongside the
+candidate source checkout. Do not rebuild separately on each OS: that would test different artifacts.
+Run the following commands on each native machine. `--test` runs the full subprocess suite against
+the isolated installed package, then removes the temporary installation.
+
+```sh
+npm ci --ignore-scripts
+npm run test:package -- --test
+npm run test:install
+node scripts/browser-smoke.mjs
+node scripts/browser-smoke.mjs --no-browser
+```
+
+`npm run build` belongs to the single artifact-producing job only. Do not substitute a Linux mock
+for native results. For an unpublished candidate, transfer its source bundle and `.artifacts/`
+privately rather than publishing a package just to test it.
 
 1. Run `node scripts/browser-smoke.mjs` in each desktop terminal, with `BROWSER` unset. The real
    default browser must open, visit the synthetic authorization endpoint with all parameters

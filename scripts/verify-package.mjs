@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { runProcess } from '../bin/lib/update.js'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
-const artifacts = resolve(process.argv[2] || join(root, '.artifacts'))
+const artifacts = resolve(process.argv.slice(2).find(arg => arg !== '--test') || join(root, '.artifacts'))
 const manifest = JSON.parse(readFileSync(join(artifacts, 'release-manifest.json')))
 const tarball = join(artifacts, manifest.filename)
 if (createHash('sha256').update(readFileSync(tarball)).digest('hex') !== manifest.sha256) throw Error('Artifact hash mismatch')
@@ -24,6 +24,11 @@ try {
   const res = await runProcess(executable, args, { env })
   if (res.code !== 0) throw Error('Installed command failed: ' + args.join(' ') + '\n' + res.stderr)
   if (args[0] === 'version' && res.stdout.trim() !== manifest.version) throw Error('Installed version differs')
+ }
+ if (process.argv.includes('--test')) {
+  const tests = await runProcess('npm', ['test'], { cwd: root, env: { ...process.env, HIRIFY_TEST_CLI: join(installedRoot, 'bin', 'hirify.js') }, timeout: 180000 })
+  console.log(tests.stdout)
+  if (tests.code !== 0) throw Error('Installed artifact tests failed: ' + tests.stderr)
  }
  if (process.env.GITHUB_ENV) {
   writeFileSync(process.env.GITHUB_ENV, `HIRIFY_TEST_CLI=${join(installedRoot, 'bin', 'hirify.js')}\nHIRIFY_TEST_PREFIX=${dir}\n`, { flag: 'a' }); keep = true
