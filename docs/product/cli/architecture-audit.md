@@ -681,7 +681,7 @@ node /home/igora/hirify-qa/2026-09-17-hirify-cli-architecture-audit-author/probe
 [p-test-scopes]: https://github.com/hirifyme/hirify-cli/blob/fce36993a7a7b23d8fcc7fa5c59b40d5ca1e495f/scripts/test.mjs#L1146-L1152
 [p-budget]: https://github.com/hirifyme/hirify-cli/blob/fce36993a7a7b23d8fcc7fa5c59b40d5ca1e495f/scripts/test.mjs#L1386-L1389
 [p-prepublish]: https://github.com/hirifyme/hirify-cli/blob/fce36993a7a7b23d8fcc7fa5c59b40d5ca1e495f/scripts/prepublish-check.mjs#L15-L52
-[p-package]: https://github.com/hirifyme/hirify-cli/blob/fce36993a7a7b23d8fcc7fa5c59b40d5ca1e495f/package.json#L1-L45
+[p-package]: https://github.com/hirifyme/hirify-cli/blob/fce36993a7a7b23d8fcc7fa5c59b40d5ca1e495f/package.json#L1-L40
 [p-readme]: https://github.com/hirifyme/hirify-cli/blob/fce36993a7a7b23d8fcc7fa5c59b40d5ca1e495f/README.md#L1-L70
 [p-skill]: https://github.com/hirifyme/hirify-cli/blob/fce36993a7a7b23d8fcc7fa5c59b40d5ca1e495f/skills/hirify/SKILL.md#L1-L151
 [p-reference]: https://github.com/hirifyme/hirify-cli/blob/fce36993a7a7b23d8fcc7fa5c59b40d5ca1e495f/skills/hirify/reference.md#L18-L65
