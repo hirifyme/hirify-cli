@@ -1,6 +1,6 @@
 // Synthetic HTTPS registry + real npm. Never installs into the user's global prefix.
 import { createServer } from 'node:https'
-import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -22,8 +22,11 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json')))
 const manifest = JSON.parse(readFileSync(join(root, '.artifacts/release-manifest.json')))
 const tgz = readFileSync(join(root, '.artifacts', manifest.filename))
 const dir = mkdtempSync(join(tmpdir(), 'hirify real npm '))
+mkdirSync(join(dir, 'real'))
+symlinkSync(join(dir, 'real'), join(dir, 'alias'), process.platform === 'win32' ? 'junction' : 'dir')
+const configDir = join(dir, 'alias', 'config')
 const prefix = join(dir, 'global prefix')
-const env = { ...process.env, npm_config_prefix: prefix, NODE_EXTRA_CA_CERTS: join(root, 'scripts/fixtures/localhost-cert.pem'), HIRIFY_NO_AUTO_UPDATE: '1', HIRIFY_API: 'http://127.0.0.1:1', HIRIFY_KEY: '', XDG_CONFIG_HOME: join(dir, 'config') }
+const env = { ...process.env, npm_config_prefix: prefix, NODE_EXTRA_CA_CERTS: join(root, 'scripts/fixtures/localhost-cert.pem'), HIRIFY_NO_AUTO_UPDATE: '1', HIRIFY_API: 'http://127.0.0.1:1', HIRIFY_KEY: '', XDG_CONFIG_HOME: configDir }
 const server = createServer({ key: readFileSync(join(root, 'scripts/fixtures/localhost-key.pem')), cert: readFileSync(env.NODE_EXTRA_CA_CERTS) }, (req, res) => {
  if (req.url !== '/package.tgz' && req.url !== '/hirify-cli' && req.url !== '/hirify-cli/' + pkg.version) { res.writeHead(307, { Location: 'https://registry.npmjs.org' + req.url }); res.end(); return }
  if (req.url === '/package.tgz') { res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); res.end(tgz); return }
@@ -50,7 +53,7 @@ try {
  const roots = await run('npm', ['root', '--global'])
  const baseRoot = join(roots.stdout.trim(), pkg.name); mkdirSync(baseRoot, { recursive: true })
  writeFileSync(join(baseRoot, 'untouched'), 'bootstrap')
- const config = { dir: join(dir, 'config'), env, version: '0.4.7' }
+ const config = { dir: configDir, env: { ...env, npm_config_global: 'true', npm_config_save: 'false', npm_config_package_lock: 'false' }, version: '0.4.7' }
  const updater = createUpdater({ config, http: {}, signal: new AbortController().signal, output: { progress() {} }, event() {}, packageRoot: baseRoot, run })
  const selected = { version: pkg.version, integrity: manifest.integrity, registry: `https://127.0.0.1:${server.address().port}` }
  await updater.install(selected, { pin: true })

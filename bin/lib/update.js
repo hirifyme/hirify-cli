@@ -109,8 +109,9 @@ export function createUpdater({ config, http, signal, output, event, packageRoot
       const previousState = readJSON(stateFile)
       const destination = join(dir, 'versions', target.version)
       if (!existsSync(destination)) {
-        staging = mkdtempSync(join(dir, '.staging-')); await makePrivate(staging, true, signal)
-        const result = await run('npm', ['install', '--prefix', staging, '--ignore-scripts', '--no-audit', '--no-fund', '--strict-ssl=true', '--registry', target.registry, `${PACKAGE_NAME}@${target.version}`], { signal, timeout: 180000, env: { ...config.env, HIRIFY_NO_AUTO_UPDATE: '1' } })
+        // npm misidentifies its root when --prefix contains an ancestor symlink (macOS /var).
+        staging = realpathSync(mkdtempSync(join(dir, '.staging-'))); await makePrivate(staging, true, signal)
+        const result = await run('npm', ['install', '--prefix', staging, '--global=false', '--save=true', '--package-lock=true', '--ignore-scripts', '--no-audit', '--no-fund', '--strict-ssl=true', '--registry', target.registry, `${PACKAGE_NAME}@${target.version}`], { signal, timeout: 180000, env: { ...config.env, HIRIFY_NO_AUTO_UPDATE: '1' } })
         if (result.code !== 0) throw new CliError('update_install_failed', 'The update could not be installed. The active CLI was not replaced.')
         const pkgPath = join(staging, 'node_modules', PACKAGE_NAME)
         const pkg = readJSON(join(pkgPath, 'package.json'))

@@ -10,6 +10,16 @@ import { runProcess } from '../bin/lib/update.js'
 const dirs = []
 after(() => { for (const dir of dirs) rmSync(dir, { recursive: true, force: true }) })
 function fixture() { const dir = mkdtempSync(join(tmpdir(), 'hirify storage ')); dirs.push(dir); return { dir, api: 'https://api.example.test' } }
+test('Windows credential ACL is current-user-only even without PowerShell modules', { skip: process.platform !== 'win32' }, async () => {
+ const config = fixture()
+ const code = `import {createStore} from ${JSON.stringify(new URL('../bin/lib/store.js', import.meta.url).href)}; const s=createStore(${JSON.stringify(config)}); await s.commit({kind:'key',access_token:'synthetic'}); await s.commit({kind:'key',access_token:'replacement'});`
+ const env = { ...process.env, PSModulePath: join(config.dir, 'no-modules'), HIRIFY_ACL_DIR: config.dir }
+ const saved = await runProcess(process.execPath, ['--input-type=module', '-e', code], { env })
+ assert.equal(saved.code, 0, saved.stderr)
+ const inspect = `$ErrorActionPreference='Stop'; $sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User; $p=$env:HIRIFY_ACL_DIR; foreach($acl in @([System.IO.Directory]::GetAccessControl($p),[System.IO.File]::GetAccessControl([System.IO.Path]::Combine($p,'auth.json')))) {if(!$acl.AreAccessRulesProtected){throw 'Inheritance enabled'};if($acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value -ne $sid.Value){throw 'Wrong owner'};$rules=$acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]);if($rules.Count -ne 1){throw 'Unexpected access rule'};foreach($rule in $rules){if($rule.IdentityReference.Value -ne $sid.Value -or $rule.AccessControlType -ne 'Allow' -or $rule.FileSystemRights -ne 'FullControl'){throw 'Unexpected access'}}};[Console]::WriteLine('private')`
+ const checked = await runProcess('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(inspect, 'utf16le').toString('base64')], { env })
+ assert.equal(checked.code, 0, checked.stderr); assert.equal(checked.stdout.trim(), 'private')
+})
 test('stale writer lock can be recovered without reading a half-written credential', async () => {
  const config = fixture(); const store = createStore(config); await store.commit({ kind: 'key', access_token: 'original' })
  const lock = join(config.dir, '.session.lock'); mkdirSync(lock); const old = new Date(Date.now() - 180000); utimesSync(lock, old, old)

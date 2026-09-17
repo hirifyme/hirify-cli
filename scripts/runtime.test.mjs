@@ -115,7 +115,7 @@ test('twenty processes share one rotating refresh transaction', {timeout:process
 test('logout wins over an in-flight refresh and leaves a generation tombstone',async()=>{
   let started;const first=new Promise(r=>started=r);const s=await apiFixture(async(req,res)=>{if(req.url==='/token'){started();await new Promise(r=>setTimeout(r,250));return json(res,{access_token:'new-access',refresh_token:'new-refresh',expires_in:3600,token_type:'Bearer'})}json(res,{data:{plan:'test'}})})
   const cfg=temp();authFile(cfg,oauth(s.url))
-  try{const reading=run(['account','show'],{api:s.url,cfg});await first;const logout=await run(['logout'],{api:s.url,cfg});await reading;assert.equal(logout.code,0,logout.stderr);assert.equal(state(cfg).kind,'signed-out');assert.ok(state(cfg).generation)}finally{await s.close()}
+  try{const reading=run(['account','show'],{api:s.url,cfg});await Promise.race([first,reading.then(r=>{throw Error('Reader exited before refresh: '+r.stderr)})]);const logout=await run(['logout'],{api:s.url,cfg});await reading;assert.equal(logout.code,0,logout.stderr);assert.equal(state(cfg).kind,'signed-out');assert.ok(state(cfg).generation)}finally{await s.close()}
 })
 test('lost refresh response is not replayed by the next process',async()=>{
   let count=0;const s=await apiFixture((req,res)=>{if(req.url==='/token'){count++;return req.socket.destroy()}json(res,{data:{}})});const cfg=temp();authFile(cfg,oauth(s.url))
