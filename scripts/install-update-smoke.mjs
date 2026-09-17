@@ -5,8 +5,19 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
+import childProcess from 'node:child_process'
+import { syncBuiltinESMExports } from 'node:module'
 import { createUpdater, activeInstallation, runProcess } from '../bin/lib/update.js'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
+// This fixture contains only synthetic credentials. Preserve native ACL diagnostics on failure.
+const execFile = childProcess.execFile
+childProcess.execFile = function (command, args, options, callback) {
+ return execFile(command, args, options, (error, stdout, stderr) => {
+  if (error && command === 'powershell.exe') console.error('Synthetic ACL fixture:', stderr)
+  callback(error, stdout, stderr)
+ })
+}
+syncBuiltinESMExports()
 const pkg = JSON.parse(readFileSync(join(root, 'package.json')))
 const manifest = JSON.parse(readFileSync(join(root, '.artifacts/release-manifest.json')))
 const tgz = readFileSync(join(root, '.artifacts', manifest.filename))
@@ -21,7 +32,21 @@ const server = createServer({ key: readFileSync(join(root, 'scripts/fixtures/loc
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 try {
- const run = async (command, args, options = {}) => { const result = await runProcess(command, args, { ...options, env: { ...env, ...options.env, npm_config_prefix: prefix, NODE_EXTRA_CA_CERTS: env.NODE_EXTRA_CA_CERTS, NO_PROXY: '*', no_proxy: '*' } }); if (result.code !== 0) console.error(result.stderr); return result }
+ const run = async (command, args, options = {}) => {
+  const result = await runProcess(command, args, { ...options, env: { ...env, ...options.env, npm_config_prefix: prefix, NODE_EXTRA_CA_CERTS: env.NODE_EXTRA_CA_CERTS, NO_PROXY: '*', no_proxy: '*' } })
+  if (result.code !== 0) console.error(result.stderr)
+  if (command === 'npm' && args[0] === 'install') {
+   const staging = args[args.indexOf('--prefix') + 1]
+   for (const file of ['package-lock.json', 'node_modules/hirify-cli/package.json']) {
+    try {
+     const metadata = JSON.parse(readFileSync(join(staging, file)))
+     console.log('Synthetic install metadata:', JSON.stringify({ file, name: metadata.name, version: metadata.version, package: metadata.packages?.['node_modules/hirify-cli'] }))
+    } catch (error) { console.error('Synthetic install metadata:', file, error.code) }
+   }
+   console.log('Synthetic npm install:', result.stdout)
+  }
+  return result
+ }
  const roots = await run('npm', ['root', '--global'])
  const baseRoot = join(roots.stdout.trim(), pkg.name); mkdirSync(baseRoot, { recursive: true })
  writeFileSync(join(baseRoot, 'untouched'), 'bootstrap')
