@@ -244,3 +244,13 @@ test('registration cannot outlive the command deadline',async()=>{
 test('an unavailable exact version pin cannot silently execute another version',async()=>{
  const r=await run(['version','--error-format=json'],{env:{HIRIFY_VERSION_PIN:'99.99.99'}});assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr).error.code,'version_pin_unavailable');assert.equal(r.stdout,'')
 })
+for(const flags of [['--data-file','-'],['--data-file=-']])test(`documented JSON stdin form sends the exact payload: ${flags.join(' ')}`,async()=>{
+ const input={text:"O'Hara \"quoted\" $HOME `literal`\nПривет",count:7};let body
+ const s=await apiFixture((_,res,text)=>{body=JSON.parse(text);json(res,{data:{accepted:true}})},{document:manifest([['test.stdin','POST','/stdin']])})
+ try{const r=await run(['api','call','test.stdin',...flags,'--json'],{api:s.url,key:'synthetic',input:JSON.stringify(input)});assert.equal(r.code,0,r.stderr);assert.deepEqual(body,input);assert.deepEqual(JSON.parse(r.stdout),{data:{accepted:true}});assert.equal(s.requests.filter(q=>q.method==='POST').length,1)}finally{await s.close()}
+})
+for(const flags of [['--cover-file','-'],['--cover-file=-']])test(`documented cover stdin form preserves the full letter: ${flags.join(' ')}`,async()=>{
+ const letter="O'Hara \"quoted\" $HOME `literal`\nПривет\n";let body
+ const s=await apiFixture((_,res,text)=>{body=JSON.parse(text);json(res,{data:{application_id:7,status:'sent'}},201)})
+ try{const r=await run(['vacancy','apply','demo',...flags,'--json'],{api:s.url,key:'synthetic',input:letter});assert.equal(r.code,0,r.stderr);assert.equal(body.cover_letter,letter);assert.equal(JSON.parse(r.stdout).data.application_id,7);assert.equal(s.requests.filter(q=>q.method==='POST').length,1)}finally{await s.close()}
+})

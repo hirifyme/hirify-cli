@@ -51,7 +51,7 @@ export function tokenize(args) {
       value = true
     } else {
       value = at >= 0 ? word.slice(at + 1) : args[++i]
-      if (value === undefined || (at < 0 && value.startsWith('-'))) throw new CliError('invalid_arguments', `--${name} requires a value. Use --${name}=<value> for a value beginning with a hyphen.`)
+      if (value === undefined || (at < 0 && value !== '-' && value.startsWith('-'))) throw new CliError('invalid_arguments', `--${name} requires a value. Use --${name}=<value> for a value beginning with a hyphen.`)
     }
     const values = options.get(name) || []; values.push(value); options.set(name, values)
   }
