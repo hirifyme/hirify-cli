@@ -1,11 +1,15 @@
 import { readFileSync, statSync } from 'node:fs'
 import { CliError, aborted } from './errors.js'
 const LIMIT = 1024 * 1024
+function decodeInput(bytes) {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes) }
+  catch { throw new CliError('input_encoding', 'Input must be UTF-8 text. Save the file as UTF-8 before retrying.') }
+}
 async function readInput(path, signal) {
   aborted(signal)
   if (path !== '-') {
-    try { if (!statSync(path).isFile() || statSync(path).size > LIMIT) throw new Error(); return readFileSync(path, 'utf8') }
-    catch { throw new CliError('input_file', 'Could not read the input file. Use a regular UTF-8 file no larger than 1 MiB.') }
+    try { if (!statSync(path).isFile() || statSync(path).size > LIMIT) throw new Error(); return decodeInput(readFileSync(path)) }
+    catch (error) { if (error instanceof CliError) throw error; throw new CliError('input_file', 'Could not read the input file. Use a regular UTF-8 file no larger than 1 MiB.') }
   }
   if (process.stdin.isTTY) throw new CliError('interaction_required', 'Pipe the input to stdin, or use a file path.')
   return new Promise((resolve, reject) => {
@@ -13,7 +17,7 @@ async function readInput(path, signal) {
     const clean = () => { process.stdin.off('data', data); process.stdin.off('end', end); process.stdin.off('error', error); signal?.removeEventListener('abort', cancel); process.stdin.pause() }
     const error = () => { clean(); reject(new CliError('input_file', 'Could not read standard input.')) }
     const data = chunk => { size += chunk.length; if (size > LIMIT) { clean(); reject(new CliError('input_too_large', 'Standard input exceeds 1 MiB.')) } else chunks.push(chunk) }
-    const end = () => { clean(); resolve(Buffer.concat(chunks).toString('utf8')) }
+    const end = () => { clean(); try { resolve(decodeInput(Buffer.concat(chunks))) } catch (error) { reject(error) } }
     const cancel = () => { clean(); reject(signal.reason) }
     process.stdin.on('data', data); process.stdin.once('end', end); process.stdin.once('error', error); signal?.addEventListener('abort', cancel, { once: true })
     if (signal?.aborted) cancel()

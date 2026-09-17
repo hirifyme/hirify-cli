@@ -254,3 +254,13 @@ for(const flags of [['--cover-file','-'],['--cover-file=-']])test(`documented co
  const s=await apiFixture((_,res,text)=>{body=JSON.parse(text);json(res,{data:{application_id:7,status:'sent'}},201)})
  try{const r=await run(['vacancy','apply','demo',...flags,'--json'],{api:s.url,key:'synthetic',input:letter});assert.equal(r.code,0,r.stderr);assert.equal(body.cover_letter,letter);assert.equal(JSON.parse(r.stdout).data.application_id,7);assert.equal(s.requests.filter(q=>q.method==='POST').length,1)}finally{await s.close()}
 })
+test('UTF-8 BOM JSON from Windows editors works through file and stdin input',async()=>{
+ const cfg=temp();const file=join(cfg,'windows.json');const input='\uFEFF'+JSON.stringify({text:'Unicode Привет'});writeFileSync(file,input);const received=[]
+ const s=await apiFixture((_,res,body)=>{received.push(JSON.parse(body));json(res,{data:{accepted:true}})},{document:manifest([['test.bom','POST','/bom']])})
+ try{for(const path of [file,'-']){const r=await run(['api','call','test.bom','--data-file',path,'--json'],{api:s.url,key:'synthetic',cfg,input});assert.equal(r.code,0,r.stderr)}assert.deepEqual(received,[{text:'Unicode Привет'},{text:'Unicode Привет'}])}finally{await s.close()}
+})
+test('non-UTF8 application text is rejected before sending a corrupted letter',async()=>{
+ const cfg=temp();const file=join(cfg,'utf16-cover.txt');const input=Buffer.concat([Buffer.from([0xff,0xfe]),Buffer.from('Cover letter','utf16le')]);writeFileSync(file,input)
+ const s=await apiFixture((_,res)=>json(res,{data:{application_id:7}},201))
+ try{for(const path of [file,'-']){const r=await run(['vacancy','apply','demo','--cover-file',path,'--error-format=json'],{api:s.url,key:'synthetic',cfg,input});assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr).error.code,'input_encoding')}assert.equal(s.requests.length,0)}finally{await s.close()}
+})
