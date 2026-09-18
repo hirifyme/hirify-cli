@@ -5,7 +5,7 @@ import { connect } from 'node:net'
 import { spawn } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, chmodSync, rmSync, symlinkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
@@ -315,6 +315,10 @@ for (const force of [false, true]) test(`read-only session cannot rotate a token
 })
 test('denied credential reads are distinct and never expose the credential path', permissionTests, async () => {
  const cfg = temp(); authFile(cfg, { kind: 'key', access_token: 'synthetic-private' })
- const r = await run(['auth', 'status', '--error-format=json'], { cfg, nodeArgs: [permissionFlag, ...[...new Set([dirname(dirname(dirname(CLI))), realpathSync(dirname(dirname(dirname(CLI))))])].map(path => `--allow-fs-read=${path}`), '--no-warnings'] })
+ const packageRoot = dirname(dirname(CLI))
+ // Installed dependencies are siblings in node_modules; a source checkout needs only its own root.
+ // Never grant the checkout parent: it may also contain the private fixture (for example /tmp).
+ const readRoot = basename(dirname(packageRoot)) === 'node_modules' ? dirname(packageRoot) : packageRoot
+ const r = await run(['auth', 'status', '--error-format=json'], { cfg, nodeArgs: [permissionFlag, `--allow-fs-read=${readRoot}`, '--no-warnings'] })
  assert.equal(r.code, 1, r.stderr + ' signal=' + r.signal); assert.ok(r.stderr.startsWith('{'), r.stderr); const error = JSON.parse(r.stderr).error; assert.equal(error.code, 'storage_unreadable'); assert.match(error.message, /read access/); assert.doesNotMatch(r.stderr, /synthetic-private/); assert.ok(!r.stderr.includes(cfg))
 })
