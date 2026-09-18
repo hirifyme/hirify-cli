@@ -7,6 +7,12 @@ import { CliError, aborted } from './errors.js'
 import { DEFAULT_API, serverURL } from './config.js'
 import { delay } from './http.js'
 
+function storageError(code, operation, error) {
+  // Never include OS error messages: they may contain private paths or user input.
+  const reason = ['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT', 'ENOENT', 'ENOTDIR', 'ERR_ACCESS_DENIED'].includes(error?.code) ? ` (${error.code})` : ''
+  const access = operation === 'read' ? 'read access' : 'write access'
+  return new CliError(code, `Could not ${operation} the saved sign-in${reason}. This command needs ${access} to the Hirify configuration directory. If it runs in an agent sandbox, request permission for this command through the agent. Otherwise, check directory permissions and available disk space. Do not copy tokens into the project or chat.`)
+}
 function stat(path) { try { return lstatSync(path) } catch (e) { if (e.code === 'ENOENT') return null; throw e } }
 function check(path, directory = false) {
   const s = stat(path)
@@ -28,13 +34,13 @@ export function createStore(config, { signal } = {}) {
   const file = join(config.dir, 'auth.json')
   const legacy = join(config.dir, 'key')
   let compromised = false
-  let secured = false
   async function ensure() {
     try { mkdirSync(config.dir, { recursive: true, mode: 0o700 }); await makePrivate(config.dir, true, signal) }
-    catch (e) { if (signal?.aborted) throw signal.reason; if (e instanceof CliError) throw e; throw new CliError('storage_unavailable', 'Could not create a private credential directory. Check its permissions.') }
+    catch (e) { if (signal?.aborted) throw signal.reason; if (e instanceof CliError) throw e; throw storageError('storage_unavailable', 'prepare', e) }
   }
   function readRaw() {
     try {
+      check(config.dir, true)
       const stateStat = check(file)
       if (stateStat) {
         const raw = readFileSync(file, 'utf8')
@@ -50,7 +56,7 @@ export function createStore(config, { signal } = {}) {
         if (key) return { kind: 'key', issuer: DEFAULT_API, access_token: key, generation: `legacy:${createHash('sha256').update(key).digest('hex')}` }
       }
       return { kind: 'signed-out', generation: 'absent' }
-    } catch (e) { if (e instanceof CliError) throw e; throw new CliError('storage_unreadable', 'Could not read the saved sign-in. Check the credential directory permissions.') }
+    } catch (e) { if (e instanceof CliError) throw e; throw storageError('storage_unreadable', 'read', e) }
   }
   function read({ allowPending = false } = {}) {
     const state = readRaw()
@@ -76,7 +82,7 @@ export function createStore(config, { signal } = {}) {
       }
       if (process.platform !== 'win32') { const dir = openSync(config.dir, 'r'); try { fsyncSync(dir) } finally { closeSync(dir) } }
       if (check(legacy)) unlinkSync(legacy)
-    } catch (e) { if (e instanceof CliError) throw e; throw new CliError('storage_write_failed', 'Could not save the sign-in safely. Check disk space and directory permissions. You may need to sign in again.') }
+    } catch (e) { if (e instanceof CliError) throw e; throw storageError('storage_write_failed', 'save', e) }
     finally { if (fd !== undefined) closeSync(fd); try { unlinkSync(temp) } catch {} }
   }
   async function locked(fn) {
@@ -87,7 +93,7 @@ export function createStore(config, { signal } = {}) {
     while (!release) {
       aborted(signal)
       try { release = await lockfile.lock(file, { realpath: false, lockfilePath: lockPath, stale: 120000, update: 10000, onCompromised: () => { compromised = true } }) }
-      catch (e) { if (e.code !== 'ELOCKED') throw new CliError('storage_lock_failed', 'Could not lock the saved sign-in. Check directory permissions.'); await delay(40 + Math.random() * 80, signal) }
+      catch (e) { if (e.code !== 'ELOCKED') throw storageError('storage_lock_failed', 'lock', e); await delay(40 + Math.random() * 80, signal) }
     }
     try { aborted(signal); return await fn() } finally { await release().catch(() => {}) }
   }
@@ -113,6 +119,5 @@ export function createStore(config, { signal } = {}) {
       return state.generation
     })
   }
-  async function secure() { if (secured) return; await ensure(); for (const path of [file, legacy]) if (check(path)) await makePrivate(path, false, signal); secured = true }
-  return { file, read, readRaw, write, locked, commit, logout, beginLogin, secure }
+  return { file, read, readRaw, write, locked, commit, logout, beginLogin }
 }

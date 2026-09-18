@@ -17,8 +17,9 @@ for reproducible work use an exact version and `HIRIFY_NO_AUTO_UPDATE=1`.
 
 A person runs `hirify login` and confirms the printed link. The CLI tries a browser only when
 appropriate. Do not run login for them. `--no-browser` is manual callback login, not device flow.
-SSH needs `--callback-port` with a matching SSH local port forward. For agents, CI and containers,
-use `HIRIFY_KEY` or pipe a key to `hirify auth --stdin`; never put a key in a command, log or chat.
+SSH needs `--callback-port` with a matching SSH local port forward. Local agents reuse the person's
+saved sign-in when permitted to access the same configuration directory. CI and separate containers
+can use `HIRIFY_KEY` or `hirify auth --stdin`; never put a key in a command, log or chat.
 `hirify auth status --json` identifies the local source. Environment keys override saved access;
 logout is local and does not unset them. Use `hirify login --force` to replace expired access.
 
@@ -107,7 +108,13 @@ errors; do not combine it with debug if expecting one object. Exit 0 means succe
 2 unsupported server manifest, 130/143 interruption. Read the stable error code and message.
 
 - `interaction_required`: ask the person to sign in or configure a key; do not wait on browser login.
-- Authentication failure: inspect `auth status`, then ask for `login --force`. Never expose a token.
+- Storage access failure: compare `doctor`, `version`, and `auth status` with the normal terminal.
+  Request permission for the specific command through the agent's approval mechanism. Reading a
+  current token needs read access; renewal needs write access. Do not treat storage errors as an
+  expired login, copy credentials into the workspace, broaden Windows ACLs, or disable the sandbox.
+  Codex on Windows may use a different account; WSL/containers do not share the Windows home.
+- Authentication failure: inspect `auth status`; ask for `login --force` only when renewal requires
+  a new sign-in. Never expose a token.
 - 403: permission or plan restriction. 429: pace or a named allowance; inspect `account show`.
 - Network/TLS/proxy failure: fix connectivity or trust configuration; never disable TLS verification.
 - `outcome_unknown`: a metered action or mutation may have succeeded. Check before repeating;

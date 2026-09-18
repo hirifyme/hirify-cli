@@ -121,6 +121,28 @@ Explicitly safe reads get bounded retries for transient network errors and 429/5
 Feedback accepts `--idempotency-key` when the server advertises caller-keyed deduplication;
 keep the same key for a deliberate retry. The CLI prints a generated request reference otherwise.
 
+## Codex and other sandboxed agents
+
+Sign in once from your normal terminal. A local agent can reuse that sign-in when it has access
+to the same configuration directory. It does not need a separate API key.
+Reading an unexpired session does not create files or change permissions. Renewing an OAuth
+session requires write access so the rotated token can be saved safely.
+
+A Windows Codex sandbox can run with a restricted token or a different Windows account. Success
+in `cmd` therefore does not prove the sandbox can access the saved sign-in. Keep credentials in
+their normal private directory. If a command is denied, let Codex request approval for that specific
+command using its normal permission mechanism. Do not disable the whole sandbox, grant `Everyone`
+access, copy `auth.json` into the project, or paste a token into chat.
+Read permission alone will not support token renewal. If approval is unavailable, report the
+restriction instead of repeatedly running login. WSL and containers have separate home directories;
+a Windows login is not automatically shared with them.
+
+Compare `hirify version`, `hirify doctor`, and `hirify auth status --json --error-format=json`
+inside the agent and in the terminal. These commands do not print tokens. `storage_unreadable`
+means reading was denied or failed; `storage_unavailable`, `storage_lock_failed`, and
+`storage_write_failed` identify preparation, locking, or saving failures. An access failure does
+not by itself mean the sign-in expired. See [Codex Windows sandbox documentation](https://learn.chatgpt.com/docs/windows/windows-sandbox).
+
 ## Configuration and diagnostics
 
 Access is stored in `auth.json` under `$XDG_CONFIG_HOME/hirify` when XDG_CONFIG_HOME is absolute,

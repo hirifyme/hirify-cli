@@ -22,8 +22,8 @@ const temps = []
 function temp() { const path = mkdtempSync(join(tmpdir(), 'hirify-runtime-')); temps.push(path); return path }
 after(() => { for (const path of temps) rmSync(path, { recursive: true, force: true }) })
 const cleanEnv = { ...process.env, HIRIFY_KEY: '', HIRIFY_API: 'http://127.0.0.1:1', HIRIFY_NO_AUTO_UPDATE: '1', HIRIFY_DEBUG: '', HIRIFY_INTERNAL_REEXEC: '', HIRIFY_VERSION_PIN: '', SSH_CONNECTION: '', SSH_TTY: '', HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '', http_proxy: '', https_proxy: '', all_proxy: '', NO_PROXY: '', no_proxy: '', NODE_OPTIONS: '', NODE_TLS_REJECT_UNAUTHORIZED: '1' }
-function launch(args, { api, cfg = temp(), key = '', env = {}, input, observe, timeout = process.platform === 'win32' ? 60000 : 10000 } = {}) {
-  const child = spawn(process.execPath, [CLI, ...args], { env: { ...cleanEnv, XDG_CONFIG_HOME: cfg, ...(api ? { HIRIFY_API: api } : {}), HIRIFY_KEY: key, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
+function launch(args, { api, cfg = temp(), key = '', env = {}, nodeArgs = [], input, observe, timeout = process.platform === 'win32' ? 60000 : 10000 } = {}) {
+  const child = spawn(process.execPath, [...nodeArgs, CLI, ...args], { env: { ...cleanEnv, XDG_CONFIG_HOME: cfg, ...(api ? { HIRIFY_API: api } : {}), HIRIFY_KEY: key, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
   let stdout = '', stderr = '', killed = false
   child.stdout.on('data', v => { stdout += v; observe?.(stdout, stderr, child) })
   child.stderr.on('data', v => { stderr += v; observe?.(stdout, stderr, child) })
@@ -278,4 +278,42 @@ test('non-UTF8 application text is rejected before sending a corrupted letter',a
  const cfg=temp();const file=join(cfg,'utf16-cover.txt');const input=Buffer.concat([Buffer.from([0xff,0xfe]),Buffer.from('Cover letter','utf16le')]);writeFileSync(file,input)
  const s=await apiFixture((_,res)=>json(res,{data:{application_id:7}},201))
  try{for(const path of [file,'-']){const r=await run(['vacancy','apply','demo','--cover-file',path,'--error-format=json'],{api:s.url,key:'synthetic',cfg,input});assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr).error.code,'input_encoding')}assert.equal(s.requests.length,0)}finally{await s.close()}
+})
+
+// Node's filesystem permission boundary is real and portable; this is not an fs mock.
+const readonlyNode = ['--experimental-permission', '--allow-fs-read=*', '--no-warnings']
+const permissionTests = { skip: Number(process.versions.node.split('.')[0]) < 20 }
+for (const kind of ['key', 'oauth', 'legacy']) test(`saved ${kind} authentication works with all filesystem writes denied`, permissionTests, async () => {
+ const cfg = temp(); const s = await apiFixture((_, res) => json(res, { data: [] }))
+ try {
+  if (kind === 'legacy') { mkdirSync(join(cfg, 'hirify')); writeFileSync(join(cfg, 'hirify/key'), 'synthetic-legacy'); }
+  else authFile(cfg, kind === 'oauth' ? oauth(s.url, { expires_at: 9999999999 }) : { kind: 'key', issuer: s.url, access_token: 'synthetic-key' })
+  // Legacy keys belong to the production issuer, so test that read without sending a bearer elsewhere.
+  if (kind === 'legacy') {
+   const r = await run(['auth', 'status', '--json'], { cfg, api: 'https://api.hirify.me', nodeArgs: readonlyNode }); assert.equal(r.code, 0, r.stderr); assert.equal(JSON.parse(r.stdout).source, 'key')
+  } else {
+   const path = join(cfg, 'hirify/auth.json'); const before = readFileSync(path, 'utf8'); const beforeStat = statSync(path)
+   const r = await run(['feed', 'list', '--json', '--error-format=json'], { cfg, api: s.url, nodeArgs: readonlyNode })
+   assert.equal(r.code, 0, r.stderr); assert.deepEqual(JSON.parse(r.stdout).data, []); assert.equal(readFileSync(path, 'utf8'), before); assert.equal(statSync(path).mtimeMs, beforeStat.mtimeMs); assert.equal(statSync(path).ctimeMs, beforeStat.ctimeMs)
+   assert.ok(s.requests.some(q => q.url === '/feeds' && q.headers.authorization))
+  }
+ } finally { await s.close() }
+})
+test('missing saved session reports auth_required without creating a directory', permissionTests, async () => {
+ const cfg = temp(); const s = await apiFixture((_, res) => json(res, { data: [] }))
+ try { const r = await run(['feed', 'list', '--error-format=json'], { cfg, api: s.url, nodeArgs: readonlyNode }); assert.equal(r.code, 1); assert.equal(JSON.parse(r.stderr).error.code, 'auth_required'); assert.equal(existsSync(join(cfg, 'hirify')), false) } finally { await s.close() }
+})
+for (const force of [false, true]) test(`read-only session cannot rotate a token before saving it: ${force ? '401' : 'expired'}`, permissionTests, async () => {
+ const cfg = temp(); const s = await apiFixture((_, res) => json(res, { error: 'expired' }, 401))
+ authFile(cfg, oauth(s.url, { expires_at: force ? 9999999999 : 1 })); const before = readFileSync(join(cfg, 'hirify/auth.json'), 'utf8')
+ try {
+  const r = await run(['feed', 'list', '--error-format=json'], { cfg, api: s.url, nodeArgs: readonlyNode })
+  assert.equal(r.code, 1); const error = JSON.parse(r.stderr).error; assert.equal(error.code, 'storage_unavailable'); assert.match(error.message, /write access/); assert.match(error.message, /ERR_ACCESS_DENIED/)
+  assert.equal(s.requests.filter(q => q.method === 'POST').length, 0); assert.equal(readFileSync(join(cfg, 'hirify/auth.json'), 'utf8'), before); assert.doesNotMatch(r.stdout + r.stderr, /synthetic-access|synthetic-refresh/)
+ } finally { await s.close() }
+})
+test('denied credential reads are distinct and never expose the credential path', permissionTests, async () => {
+ const cfg = temp(); authFile(cfg, { kind: 'key', access_token: 'synthetic-private' })
+ const r = await run(['auth', 'status', '--error-format=json'], { cfg, nodeArgs: ['--experimental-permission', `--allow-fs-read=${dirname(dirname(CLI))}`, '--no-warnings'] })
+ assert.equal(r.code, 1); const error = JSON.parse(r.stderr).error; assert.equal(error.code, 'storage_unreadable'); assert.match(error.message, /read access/); assert.doesNotMatch(r.stderr, /synthetic-private/); assert.ok(!r.stderr.includes(cfg))
 })
