@@ -17,7 +17,7 @@ import { startCallbackServer } from '../bin/lib/loopback.js'
 import { createHttp, retryDelay } from '../bin/lib/http.js'
 import { environment, openBrowser } from '../bin/lib/browser.js'
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
-const CLI = process.env.HIRIFY_TEST_CLI || join(ROOT, 'bin/hirify.js')
+const CLI = realpathSync(process.env.HIRIFY_TEST_CLI || join(ROOT, 'bin/hirify.js'))
 const temps = []
 function temp() { const path = mkdtempSync(join(tmpdir(), 'hirify-runtime-')); temps.push(path); return path }
 after(() => { for (const path of temps) rmSync(path, { recursive: true, force: true }) })
