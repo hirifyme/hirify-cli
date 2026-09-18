@@ -53,7 +53,9 @@ jobs:
         if: ${{ !cancelled() && env.HIRIFY_TEST_CLI != '' }}
 
   codex-sandbox:
-    runs-on: ubuntu-latest
+    # Ubuntu 24 restricts unprivileged user namespaces for downloaded executables.
+    # Use a runner that supports Codex bubblewrap without changing host security policy.
+    runs-on: ubuntu-22.04
     needs: artifact
     timeout-minutes: 10
     steps:

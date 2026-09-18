@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { connect } from 'node:net'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, chmodSync, rmSync, symlinkSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, statSync, chmodSync, rmSync, symlinkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -281,7 +281,8 @@ test('non-UTF8 application text is rejected before sending a corrupted letter',a
 })
 
 // Node's filesystem permission boundary is real and portable; this is not an fs mock.
-const readonlyNode = ['--experimental-permission', '--allow-fs-read=*', '--no-warnings']
+const permissionFlag = process.allowedNodeEnvironmentFlags.has('--permission') ? '--permission' : '--experimental-permission'
+const readonlyNode = [permissionFlag, '--allow-fs-read=*', '--no-warnings']
 const permissionTests = { skip: Number(process.versions.node.split('.')[0]) < 20 }
 for (const kind of ['key', 'oauth', 'legacy']) test(`saved ${kind} authentication works with all filesystem writes denied`, permissionTests, async () => {
  const cfg = temp(); const s = await apiFixture((_, res) => json(res, { data: [] }))
@@ -314,6 +315,6 @@ for (const force of [false, true]) test(`read-only session cannot rotate a token
 })
 test('denied credential reads are distinct and never expose the credential path', permissionTests, async () => {
  const cfg = temp(); authFile(cfg, { kind: 'key', access_token: 'synthetic-private' })
- const r = await run(['auth', 'status', '--error-format=json'], { cfg, nodeArgs: ['--experimental-permission', `--allow-fs-read=${dirname(dirname(CLI))}`, '--no-warnings'] })
+ const r = await run(['auth', 'status', '--error-format=json'], { cfg, nodeArgs: [permissionFlag, `--allow-fs-read=${dirname(dirname(CLI))}`, `--allow-fs-read=${realpathSync(dirname(dirname(CLI)))}`, '--no-warnings'] })
  assert.equal(r.code, 1); const error = JSON.parse(r.stderr).error; assert.equal(error.code, 'storage_unreadable'); assert.match(error.message, /read access/); assert.doesNotMatch(r.stderr, /synthetic-private/); assert.ok(!r.stderr.includes(cfg))
 })
