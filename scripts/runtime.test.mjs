@@ -315,6 +315,6 @@ for (const force of [false, true]) test(`read-only session cannot rotate a token
 })
 test('denied credential reads are distinct and never expose the credential path', permissionTests, async () => {
  const cfg = temp(); authFile(cfg, { kind: 'key', access_token: 'synthetic-private' })
- const r = await run(['auth', 'status', '--error-format=json'], { cfg, nodeArgs: [permissionFlag, `--allow-fs-read=${dirname(dirname(CLI))}`, `--allow-fs-read=${realpathSync(dirname(dirname(CLI)))}`, '--no-warnings'] })
- assert.equal(r.code, 1); const error = JSON.parse(r.stderr).error; assert.equal(error.code, 'storage_unreadable'); assert.match(error.message, /read access/); assert.doesNotMatch(r.stderr, /synthetic-private/); assert.ok(!r.stderr.includes(cfg))
+ const r = await run(['auth', 'status', '--error-format=json'], { cfg, nodeArgs: [permissionFlag, ...[...new Set([dirname(dirname(dirname(CLI))), realpathSync(dirname(dirname(dirname(CLI))))])].map(path => `--allow-fs-read=${path}`), '--no-warnings'] })
+ assert.equal(r.code, 1, r.stderr + ' signal=' + r.signal); assert.ok(r.stderr.startsWith('{'), r.stderr); const error = JSON.parse(r.stderr).error; assert.equal(error.code, 'storage_unreadable'); assert.match(error.message, /read access/); assert.doesNotMatch(r.stderr, /synthetic-private/); assert.ok(!r.stderr.includes(cfg))
 })
