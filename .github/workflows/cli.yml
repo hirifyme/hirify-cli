@@ -70,3 +70,63 @@ jobs:
           path: .artifacts
       - run: npm run test:package
       - run: npm exec --yes --package=@openai/codex@0.155.0 -- node scripts/codex-sandbox-smoke.mjs
+
+  candidate:
+    # The one required check of the release route: green only when every acceptance job is green,
+    # and on a pull request only when its version is not on npm yet, so every merge ships.
+    if: ${{ always() }}
+    needs: [artifact, platform, codex-sandbox]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - run: |
+          test "${{ needs.artifact.result }}" = success
+          test "${{ needs.platform.result }}" = success
+          test "${{ needs.codex-sandbox.result }}" = success
+      - if: ${{ github.event_name == 'pull_request' }}
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if npm view "hirify-cli@$version" version >/dev/null 2>&1; then
+            echo "hirify-cli@$version is already on npm: raise the version in package.json and npm-shrinkwrap.json" >&2
+            exit 1
+          fi
+
+  publish:
+    # Release: a push to main publishes the accepted artifact to npm, once per version, and
+    # records a GitHub release on the same commit. The deploy receipt reads both.
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cli-candidate
+          path: .artifacts
+      - env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          manifest=.artifacts/release-manifest.json
+          version=$(jq -r .version "$manifest")
+          file=".artifacts/$(jq -r .filename "$manifest")"
+          test "$(jq -r .source_commit "$manifest")" = "$GITHUB_SHA"
+          test "$(jq -r .source_dirty "$manifest")" = false
+          test "$(sha256sum "$file" | cut -d' ' -f1)" = "$(jq -r .sha256 "$manifest")"
+          if npm view "hirify-cli@$version" version >/dev/null 2>&1; then
+            echo "hirify-cli@$version is already on npm; nothing to publish."
+          else
+            npm publish "$file" --access public
+          fi
+          if ! gh release view "v$version" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "v$version" -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Hirify CLI $version" --notes "npm: hirify-cli@$version, SHA256 $(jq -r .sha256 "$manifest")" "$file"
+          fi
