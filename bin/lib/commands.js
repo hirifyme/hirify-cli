@@ -291,6 +291,36 @@ async function cmdVacancyReveal(args, words) {
 }
 
 /**
+ * Hide vacancies or whole companies so they stop coming back in search and feeds. The same
+ * list the website's "Hide" button writes, so it works in both directions. Free and not
+ * limited; --undo brings them back. Up to 100 per call: the server takes them in one request.
+ */
+function printHidden(d, one, many, undo) {
+  const n = count(d.updated) ?? 0
+  const noun = n === 1 ? one : many
+  console.log(undo
+    ? `${n} ${noun} unhidden.`
+    : `${n} ${noun} hidden. ${n === 1 ? 'It no longer appears' : 'They no longer appear'} in your search and feeds.`)
+  if (Array.isArray(d.not_found) && d.not_found.length) console.log(`not found: ${d.not_found.join(', ')}`)
+}
+
+async function cmdVacancyHide(args, words) {
+  if (!words.length) die('at least one vacancy slug is required: hirify vacancy hide <slug>...')
+  const undo = args.includes('--undo')
+  const body = await callCapability('vacancies.hide', { payload: { slugs: words, hidden: !undo } })
+  out(body, () => printHidden(body?.data ?? {}, 'vacancy', 'vacancies', undo))
+}
+
+async function cmdCompanyHide(args, words) {
+  const vacancy = flag(args, '--vacancy')
+  if (!words.length && !vacancy) die('name the company, or pass one of its vacancies: hirify company hide "<name>" | --vacancy <slug>')
+  const undo = args.includes('--undo')
+  const payload = { hidden: !undo, ...(words.length ? { names: words } : {}), ...(vacancy ? { slugs: [vacancy] } : {}) }
+  const body = await callCapability('companies.hide', { payload })
+  out(body, () => printHidden(body?.data ?? {}, 'company', 'companies', undo))
+}
+
+/**
  * Report a bug or ask for a feature. Free: it does not touch the reveal limit.
  *
  * What is required is checked here, because a missing `--body` is a fact about the command
@@ -818,6 +848,7 @@ return {
   intro: cmdIntro, skill: cmdSkill,
   'account show': cmdAccountShow,
   'vacancy search': cmdVacancySearch, 'vacancy read': cmdVacancyRead, 'vacancy reveal': cmdVacancyReveal, 'vacancy apply': cmdVacancyApply,
+  'vacancy hide': cmdVacancyHide, 'company hide': cmdCompanyHide,
   'feed list': cmdFeedList, 'feed show': cmdFeedShow, 'feed create': cmdFeedCreate, 'feed deliver': cmdFeedDeliver,
   'profile list': cmdProfileList, 'webhook list': cmdWebhookList, 'webhook create': cmdWebhookCreate,
   'feedback send': cmdFeedbackSend, 'filter guide': cmdFilterGuide, 'api call': cmdApiCall,

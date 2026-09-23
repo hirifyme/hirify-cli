@@ -68,6 +68,8 @@ hirify filter guide
 hirify vacancy search "senior go"
 hirify vacancy read <slug>
 hirify vacancy reveal <slug>
+hirify vacancy hide <slug>...
+hirify company hide "<name>"
 hirify profile list
 hirify vacancy apply <slug> --profile <id> --cover-file cover.txt
 ```
@@ -76,6 +78,8 @@ Lists and searches are free. Reading a vacancy in full, revealing its contact, a
 have a separate allowance. `hirify account show` supplies the current values. Shortlist from cards,
 read to assess fit, then reveal what fits. Applying sends a real application and cannot be recalled:
 get the person's approval first. External vacancies are applied to through the destination from `reveal`.
+Hiding a vacancy or a company is free and has no limit: it stops coming back in search and feeds,
+here and on the website. `--undo` brings it back.
 
 The server defines search filters. Read `hirify filter guide`, preview with `filters.preview`, refine,
 and then run the final search. Do not infer filter names from an old example.

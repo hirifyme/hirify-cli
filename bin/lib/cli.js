@@ -1,7 +1,7 @@
 import { CliError, redact, safeText } from './errors.js'
-const ARGUMENTS = { auth: '[<key>]', update: '[<version>]', 'vacancy search': '[<query>]', 'vacancy read': '<slug>', 'vacancy reveal': '<slug>', 'vacancy apply': '<slug>', 'feed show': '<id>', 'feed create': '<name>', 'feed deliver': '<id>', 'webhook create': '<name> <url>', 'feedback send': '<bug|feature> <title>', 'api call': '<capability>', 'capabilities show': '<capability>' }
+const ARGUMENTS = { auth: '[<key>]', update: '[<version>]', 'vacancy search': '[<query>]', 'vacancy read': '<slug>', 'vacancy reveal': '<slug>', 'vacancy apply': '<slug>', 'vacancy hide': '<slug>...', 'company hide': '[<name>...]', 'feed show': '<id>', 'feed create': '<name>', 'feed deliver': '<id>', 'webhook create': '<name> <url>', 'feedback send': '<bug|feature> <title>', 'api call': '<capability>', 'capabilities show': '<capability>' }
 const GLOBAL = ['json', 'fields', 'error-format', 'debug', 'timeout', 'help']
-export const BOOLEAN_FLAGS = new Set(['json', 'debug', 'help', 'force', 'no-browser', 'stdin', 'telegram', 'no-telegram', 'no-webhook', 'check', 'rollback'])
+export const BOOLEAN_FLAGS = new Set(['json', 'debug', 'help', 'force', 'no-browser', 'stdin', 'telegram', 'no-telegram', 'no-webhook', 'check', 'rollback', 'undo'])
 export const COMMANDS = {
   intro: { args: [0, 0], description: 'what this can do, and in what order' },
   version: { args: [0, 0], description: 'installed version' },
@@ -17,6 +17,8 @@ export const COMMANDS = {
   'vacancy read': { args: [1, 1], description: 'read one vacancy in full; uses a vacancy open' },
   'vacancy reveal': { args: [1, 1], description: 'get the contact or link to apply; uses a reveal' },
   'vacancy apply': { args: [1, 1], flags: ['profile', 'cover', 'cover-file'], description: 'send a real application; ask the person first' },
+  'vacancy hide': { args: [1, 100], flags: ['undo'], description: 'hide vacancies from your search and feeds; free, no limit' },
+  'company hide': { args: [0, 100], flags: ['vacancy', 'undo'], description: 'hide a company by name, or by --vacancy <slug>; free, no limit' },
   'feed list': { args: [0, 0], description: 'your saved feeds' },
   'feed show': { args: [1, 1], flags: ['limit', 'page'], description: 'vacancies in a feed' },
   'feed create': { args: [1, 1], flags: ['filters', 'telegram', 'no-telegram', 'webhook'], description: 'save a search and its delivery settings' },
