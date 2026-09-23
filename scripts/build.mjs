@@ -27,7 +27,7 @@ for (const path of paths) {
 for (const file of ['bin/lib/main.js', 'bin/lib/auth.js', 'npm-shrinkwrap.json', 'LICENSE', 'NOTICE']) assert(paths.includes(file), 'Missing runtime/license file: ' + file)
 const git = await runProcess('git', ['-C', root, 'rev-parse', 'HEAD'])
 const tracked = await runProcess('git', ['-C', root, 'ls-files'])
-for (const path of tracked.stdout.trim().split('\n')) assert(/^(bin\/|skills\/|scripts\/|\.github\/|README.md$|NOTICE$|LICENSE$|package.json$|npm-shrinkwrap.json$|\.gitignore$)/.test(path), 'Unexpected public repository path: ' + path)
+for (const path of tracked.stdout.trim().split('\n')) assert(/^(bin\/|skills\/|scripts\/|\.github\/|README.md$|NOTICE$|LICENSE$|package.json$|npm-shrinkwrap.json$|deploy.env$|\.gitignore$)/.test(path), 'Unexpected public repository path: ' + path)
 const ancestry = await runProcess('git', ['-C', root, 'merge-base', '--is-ancestor', 'fce36993a7a7b23d8fcc7fa5c59b40d5ca1e495f', 'HEAD'])
 assert(ancestry.code === 0, 'Candidate must descend from verified public history')
 const dirty = await runProcess('git', ['-C', root, 'status', '--porcelain', '--untracked-files=normal'])
