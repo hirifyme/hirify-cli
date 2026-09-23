@@ -49,8 +49,7 @@ no permission. Sending, saving and configuring do.
 3. `vacancy read <slug>` to assess fit from the full text rather than a headline.
 4. `vacancy reveal <slug>` only for vacancies that still fit after reading.
 5. Apply only after the person's approval and the rules below.
-6. `vacancy hide <slug>...` (or `company hide`) for what the user rejected: it stops coming back.
-   Free, no limit.
+6. `vacancy hide` / `company hide` what the user rejected; free, unlimited.
 
 ## Searching
 
