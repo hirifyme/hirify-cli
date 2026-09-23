@@ -19,6 +19,7 @@ export const COMMANDS = {
   'vacancy apply': { args: [1, 1], flags: ['profile', 'cover', 'cover-file'], description: 'send a real application; ask the person first' },
   'vacancy hide': { args: [1, 100], flags: ['undo'], description: 'hide vacancies from your search and feeds; free, no limit' },
   'company hide': { args: [0, 100], flags: ['vacancy', 'undo'], description: 'hide a company by name, or by --vacancy <slug>; free, no limit' },
+  'hidden list': { args: [0, 0], flags: ['page', 'limit'], description: 'what you hid: vacancies and companies' },
   'feed list': { args: [0, 0], description: 'your saved feeds' },
   'feed show': { args: [1, 1], flags: ['limit', 'page'], description: 'vacancies in a feed' },
   'feed create': { args: [1, 1], flags: ['filters', 'telegram', 'no-telegram', 'webhook'], description: 'save a search and its delivery settings' },

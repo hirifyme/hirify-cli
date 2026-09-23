@@ -238,6 +238,11 @@ async function cmdVacancyRead(args, words) {
       ['page', d.url],
     ])
     if (rows.length) console.log('\n' + rows.join('\n'))
+    if (d.hidden) {
+      console.log(d.hidden_reason === 'company'
+        ? '\nHidden: its company is hidden, so it stays out of search and feeds.'
+        : '\nHidden: you hid this vacancy, so it stays out of search and feeds.')
+    }
 
     const text = d.description ? asText(d.description) : ''
     console.log(text ? `\n${text}\n` : '\nThis vacancy has no text on it.\n')
@@ -295,20 +300,60 @@ async function cmdVacancyReveal(args, words) {
  * list the website's "Hide" button writes, so it works in both directions. Free and not
  * limited; --undo brings them back. Up to 100 per call: the server takes them in one request.
  */
-function printHidden(d, one, many, undo) {
-  const n = count(d.updated) ?? 0
-  const noun = n === 1 ? one : many
-  console.log(undo
-    ? `${n} ${noun} unhidden.`
-    : `${n} ${noun} hidden. ${n === 1 ? 'It no longer appears' : 'They no longer appear'} in your search and feeds.`)
-  if (Array.isArray(d.not_found) && d.not_found.length) console.log(`not found: ${d.not_found.join(', ')}`)
+// What each result status means, in the words a person reads. The server names the outcome of
+// every item, so nobody has to search again to find out whether a hide took.
+const HIDE_STATUS = {
+  hidden: 'hidden', already_hidden: 'already hidden', unhidden: 'unhidden',
+  not_hidden: 'was not hidden', not_found: 'not found', no_company: 'no company name',
+}
+
+function printHidden(d, many, undo) {
+  const results = Array.isArray(d.results) ? d.results : []
+  const label = (r) => r.company ? `${r.company} (${r.slug})` : (r.name ?? r.slug ?? '-')
+  const width = Math.max(0, ...results.map((r) => (HIDE_STATUS[r.status] ?? String(r.status)).length))
+  for (const r of results) {
+    const status = HIDE_STATUS[r.status] ?? String(r.status)
+    console.log(`${status.padEnd(width)}  ${label(r)}${r.still_hidden_by_company ? '  (still hidden: its company is hidden)' : ''}`)
+  }
+  const summary = Object.entries(d.summary ?? {}).map(([k, n]) => `${n} ${HIDE_STATUS[k] ?? k}`).join(', ')
+  if (summary) console.log(`\n${summary}.`)
+  if (!undo && (d.summary?.hidden || d.summary?.already_hidden)) console.log(`Hidden ${many} do not appear in your search and feeds. See them: hirify hidden list`)
+}
+
+/** Everything the person hid, here or on the website: vacancies page by page, all companies. */
+async function cmdHiddenList(args) {
+  const query = new URLSearchParams()
+  const page = flag(args, '--page')
+  const limit = flag(args, '--limit')
+  if (page) query.set('page', page)
+  if (limit) query.set('per_page', limit)
+  const body = await callCapability('hidden.list', { query })
+  const d = body?.data ?? {}
+  const m = body?.meta ?? {}
+  out(body, () => {
+    const vacancies = d.vacancies ?? []
+    const companies = d.companies ?? []
+    console.log(`Hidden vacancies: ${d.totals?.vacancies ?? vacancies.length}`)
+    for (const v of vacancies) {
+      console.log(`  ${v.slug}\n    ${[v.title, v.company].filter(Boolean).join(' · ')}${v.archived ? '  [archived]' : ''}  hidden ${dateOnly(v.hidden_at) ?? '-'}`)
+    }
+    if (m.last_page > 1) console.log(`  page ${m.page} of ${m.last_page}: --page <n>`)
+    console.log(`\nHidden companies: ${d.totals?.companies ?? companies.length}`)
+    for (const c of companies) {
+      const n = count(c.live_vacancies) ?? 0
+      console.log(`  ${c.name}  (${n} live ${n === 1 ? 'vacancy' : 'vacancies'})  hidden ${dateOnly(c.hidden_at) ?? '-'}`)
+    }
+    if (vacancies.length || companies.length) {
+      console.log('\nUnhide: hirify vacancy hide <slug> --undo  |  hirify company hide "<name>" --undo')
+    }
+  })
 }
 
 async function cmdVacancyHide(args, words) {
   if (!words.length) die('at least one vacancy slug is required: hirify vacancy hide <slug>...')
   const undo = args.includes('--undo')
   const body = await callCapability('vacancies.hide', { payload: { slugs: words, hidden: !undo } })
-  out(body, () => printHidden(body?.data ?? {}, 'vacancy', 'vacancies', undo))
+  out(body, () => printHidden(body?.data ?? {}, 'vacancies', undo))
 }
 
 async function cmdCompanyHide(args, words) {
@@ -317,7 +362,7 @@ async function cmdCompanyHide(args, words) {
   const undo = args.includes('--undo')
   const payload = { hidden: !undo, ...(words.length ? { names: words } : {}), ...(vacancy ? { slugs: [vacancy] } : {}) }
   const body = await callCapability('companies.hide', { payload })
-  out(body, () => printHidden(body?.data ?? {}, 'company', 'companies', undo))
+  out(body, () => printHidden(body?.data ?? {}, 'companies', undo))
 }
 
 /**
@@ -848,7 +893,7 @@ return {
   intro: cmdIntro, skill: cmdSkill,
   'account show': cmdAccountShow,
   'vacancy search': cmdVacancySearch, 'vacancy read': cmdVacancyRead, 'vacancy reveal': cmdVacancyReveal, 'vacancy apply': cmdVacancyApply,
-  'vacancy hide': cmdVacancyHide, 'company hide': cmdCompanyHide,
+  'vacancy hide': cmdVacancyHide, 'company hide': cmdCompanyHide, 'hidden list': cmdHiddenList,
   'feed list': cmdFeedList, 'feed show': cmdFeedShow, 'feed create': cmdFeedCreate, 'feed deliver': cmdFeedDeliver,
   'profile list': cmdProfileList, 'webhook list': cmdWebhookList, 'webhook create': cmdWebhookCreate,
   'feedback send': cmdFeedbackSend, 'filter guide': cmdFilterGuide, 'api call': cmdApiCall,
