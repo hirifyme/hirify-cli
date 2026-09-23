@@ -114,6 +114,8 @@ const CAPS = [
   ['webhooks.create', 'POST', '/api/agent/webhooks'],
   ['feedback.send', 'POST', '/api/agent/feedback'],
   ['filters.guide', 'GET', '/api/agent/filters/guide'],
+  ['vacancies.hide', 'POST', '/api/agent/vacancies/hide'],
+  ['companies.hide', 'POST', '/api/agent/companies/hide'],
 ]
 
 /**
@@ -263,6 +265,23 @@ test('read prints the vacancy, its terms and its text', async () => {
   assert.match(stdout, /^location: Europe · berlin$/m)
   assert.match(stdout, /^posted: {3}2026-08-20$/m)
   assert.match(stdout, /^page: {5}https:\/\/hirify\.me\/jobs\/senior-go-engineer/m)
+})
+
+test('hide sends the slugs in one call and says they will not come back', async () => {
+  const { code, stdout, seen } = await run(['vacancy', 'hide', 'a-1', 'b-2', 'gone'], answer(200, { data: { hidden: true, updated: 2, not_found: ['gone'] } }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/vacancies/hide'])
+  assert.match(stdout, /^2 vacancies hidden\. They no longer appear in your search and feeds\.$/m)
+  assert.match(stdout, /^not found: gone$/m)
+})
+
+test('company hide by vacancy and undo', async () => {
+  const { code, stdout, seen } = await run(['company', 'hide', '--vacancy', 'a-1', '--undo'], answer(200, { data: { hidden: false, updated: 1, not_found: [] } }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/companies/hide'])
+  assert.match(stdout, /^1 company unhidden\.$/m)
 })
 
 test('read turns the html description into lines a terminal can print', async () => {
