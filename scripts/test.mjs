@@ -116,6 +116,7 @@ const CAPS = [
   ['filters.guide', 'GET', '/api/agent/filters/guide'],
   ['vacancies.hide', 'POST', '/api/agent/vacancies/hide'],
   ['companies.hide', 'POST', '/api/agent/companies/hide'],
+  ['hidden.list', 'GET', '/api/agent/hidden'],
 ]
 
 /**
@@ -268,20 +269,42 @@ test('read prints the vacancy, its terms and its text', async () => {
 })
 
 test('hide sends the slugs in one call and says they will not come back', async () => {
-  const { code, stdout, seen } = await run(['vacancy', 'hide', 'a-1', 'b-2', 'gone'], answer(200, { data: { hidden: true, updated: 2, not_found: ['gone'] } }))
+  const data = { action: 'hide', summary: { hidden: 1, already_hidden: 1, not_found: 1 }, results: [
+    { slug: 'a-1', status: 'hidden' }, { slug: 'b-2', status: 'already_hidden' }, { slug: 'gone', status: 'not_found' }] }
+  const { code, stdout, seen } = await run(['vacancy', 'hide', 'a-1', 'b-2', 'gone'], answer(200, { data }))
 
   assert.equal(code, 0)
   assert.deepEqual(seen, ['/api/agent/vacancies/hide'])
-  assert.match(stdout, /^2 vacancies hidden\. They no longer appear in your search and feeds\.$/m)
-  assert.match(stdout, /^not found: gone$/m)
+  assert.match(stdout, /^hidden {10}a-1$/m)
+  assert.match(stdout, /^already hidden {2}b-2$/m)
+  assert.match(stdout, /^not found {7}gone$/m)
+  assert.match(stdout, /^1 hidden, 1 already hidden, 1 not found\.$/m)
+  assert.match(stdout, /^Hidden vacancies do not appear in your search and feeds\. See them: hirify hidden list$/m)
 })
 
 test('company hide by vacancy and undo', async () => {
-  const { code, stdout, seen } = await run(['company', 'hide', '--vacancy', 'a-1', '--undo'], answer(200, { data: { hidden: false, updated: 1, not_found: [] } }))
+  const data = { action: 'unhide', summary: { unhidden: 1 }, results: [{ slug: 'a-1', company: 'Acme', status: 'unhidden' }] }
+  const { code, stdout, seen } = await run(['company', 'hide', '--vacancy', 'a-1', '--undo'], answer(200, { data }))
 
   assert.equal(code, 0)
   assert.deepEqual(seen, ['/api/agent/companies/hide'])
-  assert.match(stdout, /^1 company unhidden\.$/m)
+  assert.match(stdout, /^unhidden {2}Acme \(a-1\)$/m)
+  assert.match(stdout, /^1 unhidden\.$/m)
+})
+
+test('hidden list shows vacancies and companies and how to unhide', async () => {
+  const body = { data: {
+    vacancies: [{ slug: 'a-1', title: 'Go Engineer', company: 'Acme', archived: true, hidden_at: '2026-09-23T19:35:28+04:00' }],
+    companies: [{ name: 'Evil Co', live_vacancies: 4, hidden_at: '2026-09-22T10:00:00+04:00' }],
+    totals: { vacancies: 1, companies: 1 } }, meta: { page: 1, per_page: 50, total: 1, last_page: 1 } }
+  const { code, stdout, seen } = await run(['hidden', 'list'], answer(200, body))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/hidden'])
+  assert.match(stdout, /^Hidden vacancies: 1$/m)
+  assert.match(stdout, /^ {4}Go Engineer · Acme {2}\[archived\] {2}hidden 2026-09-23$/m)
+  assert.match(stdout, /^ {2}Evil Co {2}\(4 live vacancies\) {2}hidden 2026-09-22$/m)
+  assert.match(stdout, /^Unhide: hirify vacancy hide <slug> --undo/m)
 })
 
 test('read turns the html description into lines a terminal can print', async () => {

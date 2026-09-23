@@ -3,9 +3,9 @@ import { CliError } from './errors.js'
 import { trustedURL } from './config.js'
 import { requireJSON, retryDelay } from './http.js'
 import { accessRestrictedMessage, actionRequiredMessage } from './messages.js'
-const READS = new Set(['account.status', 'vacancies.search', 'feeds.list', 'feeds.vacancies', 'profiles.list', 'webhooks.list', 'filters.guide'])
+const READS = new Set(['account.status', 'vacancies.search', 'feeds.list', 'feeds.vacancies', 'profiles.list', 'webhooks.list', 'filters.guide', 'hidden.list'])
 const LISTS = new Set(['vacancies.search', 'feeds.list', 'feeds.vacancies', 'profiles.list', 'webhooks.list'])
-const OBJECTS = new Set(['account.status', 'vacancies.read', 'vacancies.reveal', 'applications.apply', 'feeds.create', 'feeds.set_delivery', 'webhooks.create', 'feedback.send', 'filters.guide'])
+const OBJECTS = new Set(['account.status', 'vacancies.read', 'vacancies.reveal', 'applications.apply', 'feeds.create', 'feeds.set_delivery', 'webhooks.create', 'feedback.send', 'filters.guide', 'hidden.list'])
 const isObject = value => value && typeof value === 'object' && !Array.isArray(value)
 const immutable = value => { if (value && typeof value === 'object') { for (const child of Object.values(value)) immutable(child); Object.freeze(value) }; return value }
 export function validateManifest(doc, origin) {
