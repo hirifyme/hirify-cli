@@ -1,11 +1,11 @@
 import { CliError, redact, safeText } from './errors.js'
 const ARGUMENTS = { auth: '[<key>]', update: '[<version>]', 'vacancy search': '[<query>]', 'vacancy read': '<slug>', 'vacancy reveal': '<slug>', 'vacancy apply': '<slug>', 'vacancy hide': '<slug>...', 'company hide': '[<name>...]', 'feed show': '<id>', 'feed create': '<name>', 'feed deliver': '<id>', 'webhook create': '<name> <url>', 'feedback send': '<bug|feature> <title>', 'api call': '<capability>', 'capabilities show': '<capability>' }
 const GLOBAL = ['json', 'fields', 'error-format', 'debug', 'timeout', 'help']
-export const BOOLEAN_FLAGS = new Set(['json', 'debug', 'help', 'force', 'no-browser', 'no-install', 'no-login', 'stdin', 'telegram', 'no-telegram', 'no-webhook', 'check', 'rollback', 'undo'])
+export const BOOLEAN_FLAGS = new Set(['json', 'debug', 'help', 'force', 'no-browser', 'stdin', 'telegram', 'no-telegram', 'no-webhook', 'check', 'rollback', 'undo'])
 export const COMMANDS = {
   intro: { args: [0, 0], description: 'what this can do, and in what order' },
   version: { args: [0, 0], description: 'installed version' },
-  init: { args: [0, 0], flags: ['no-install', 'no-login', 'no-browser', 'callback-port'], description: 'install the CLI and the skill, then sign in' },
+  init: { args: [0, 0], flags: ['no-browser', 'callback-port'], description: 'install the CLI and the skill, then sign in' },
   skill: { args: [0, 0], description: 'install the working rules for your agent' },
   login: { args: [0, 0], flags: ['force', 'no-browser', 'callback-port'], description: 'sign in through your browser' },
   logout: { args: [0, 0], description: 'sign out on this computer' },

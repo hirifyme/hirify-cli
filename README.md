@@ -14,7 +14,8 @@ npx -y hirify-cli@latest init
 
 One command installs the CLI globally, installs the skill for the agents found on this computer
 (Claude Code, Codex, Cursor, OpenCode, Gemini CLI, Antigravity) and signs you in through the browser.
-Run it yourself or let your agent run it. `--no-install` and `--no-login` skip a step.
+Run it yourself or let your agent run it. It installs the newest release, whichever version
+started it; a pinned version (`HIRIFY_VERSION_PIN`, `HIRIFY_NO_AUTO_UPDATE=1`) is kept.
 
 The same steps one by one:
 

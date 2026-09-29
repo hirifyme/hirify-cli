@@ -73,30 +73,26 @@ export async function main(argv = process.argv.slice(2), { baseRoot = ownRoot, b
       const { installGlobally, installSkill, describeSkill } = await import('./setup.js')
       const result = {}
       let skillRoot = ownRoot
-      if (!command.values['no-install']) {
-        output.progress('Installing the Hirify CLI...')
-        // A newer CLI found on this computer stays, and the skill is taken from it.
-        const { root, ...cli } = await installGlobally({ version: pkg.version, signal, env: config.env })
-        result.cli = cli
-        if (root) skillRoot = root
-      }
+      output.progress('Installing the Hirify CLI...')
+      const { root, ...cli } = await installGlobally({ version: pkg.version, latest: updater.check, signal, env: config.env })
+      result.cli = cli
+      // The skill comes from the CLI that is installed, so the two match.
+      if (cli.installed && cli.version !== pkg.version) skillRoot = root
       try { result.skill = installSkill({ packageRoot: skillRoot, env: config.env }) }
       catch (error) { if (!(error instanceof CliError)) throw error; result.skill = { error: error.code, message: error.message, agents: [] } }
-      if (!command.values['no-login']) {
-        let source = 'none'
-        try { source = auth.status().source } catch {}
-        if (['environment', 'key'].includes(source)) result.sign_in = { signed_in: true, already_signed_in: true, source }
-        else try { result.sign_in = await auth.login({ noBrowser: Boolean(command.values['no-browser']), port: Number(command.values['callback-port'] || 0), consentMs: Math.min(command.timeout, 300000) }) }
-        catch (error) { if (!(error instanceof CliError) || signal.aborted) throw error; result.sign_in = { signed_in: false, error: error.code, message: error.message } }
-      }
+      try {
+        const { source } = auth.status()
+        // A configured key is a finished sign-in: no browser, no waiting.
+        result.sign_in = ['environment', 'key'].includes(source) ? { signed_in: true, already_signed_in: true, source } : await auth.login({ noBrowser: Boolean(command.values['no-browser']), port: Number(command.values['callback-port'] || 0), consentMs: Math.min(command.timeout, 300000) })
+      } catch (error) { if (!(error instanceof CliError) || signal.aborted) throw error; result.sign_in = { signed_in: false, error: error.code, message: error.message } }
       if (command.json) output.json(result)
       else {
-        if (result.cli) output.console.log(result.cli.installed ? `Hirify CLI ${result.cli.version} is installed. The command is: hirify` : `The CLI could not be installed globally (${result.cli.reason}). Every command still works as: npx -y hirify-cli <command>`)
+        output.console.log(result.cli.installed ? `Hirify CLI ${result.cli.version} is installed. The command is: hirify` : `The CLI could not be installed globally (${result.cli.reason}). Every command still works as: npx -y hirify-cli <command>`)
         if (result.skill.error) output.console.log(result.skill.message); else for (const line of describeSkill(result.skill)) output.console.log(line)
-        if (result.sign_in) output.console.log(result.sign_in.signed_in ? (result.sign_in.already_signed_in ? 'Already signed in.' : 'Signed in. Access saved on this computer.') : result.sign_in.message)
-        if (result.sign_in?.signed_in) output.console.log('Next: ask your agent to look at your Hirify profile and saved searches.')
+        output.console.log(result.sign_in.signed_in ? (result.sign_in.already_signed_in ? 'Already signed in.' : 'Signed in. Access saved on this computer.') : result.sign_in.message)
+        if (result.sign_in.signed_in) output.console.log('Next: ask your agent to look at your Hirify profile and saved searches.')
       }
-      if (result.cli?.installed === false || result.skill.error || result.skill.agents.some(item => !item.installed) || result.sign_in?.signed_in === false) exitCode = 1
+      if (!result.cli.installed || result.skill.error || result.skill.agents.some(item => !item.installed) || !result.sign_in.signed_in) exitCode = 1
     } else if (command.name === 'auth') {
       secrets.add(command.words[0])
       await store.commit({ kind: 'key', access_token: command.words[0] })
