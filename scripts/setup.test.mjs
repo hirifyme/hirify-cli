@@ -162,7 +162,9 @@ test('hirify init installs the CLI and the skill, and a configured key is a fini
     skill: { skill: 'hirify', path: join(dir, '.agents', 'skills', 'hirify'), agents: [{ agent: 'Claude Code', installed: true }] },
     sign_in: { signed_in: true, already_signed_in: true, source: 'environment' },
   })
-  assert.equal(readFileSync(join(dir, '.claude', 'skills', 'hirify', 'SKILL.md'), 'utf8'), SKILL)
+  // The CLI under test may be the packed artifact, whose line endings differ from a Windows checkout.
+  const lines = text => text.replace(/\r\n/g, '\n')
+  assert.equal(lines(readFileSync(join(dir, '.claude', 'skills', 'hirify', 'SKILL.md'), 'utf8')), lines(SKILL))
 })
 
 test('hirify init takes the skill from the installed CLI when that is not the running one', async () => {
