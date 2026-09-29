@@ -147,7 +147,8 @@ function scripted(dir, { fail = false } = {}) {
   const root = join(dir, 'global'), bin = join(dir, 'bin')
   mkdirSync(root); mkdirSync(bin)
   writeFileSync(join(bin, 'npm'), `#!/bin/sh\nif [ "$1" = root ]; then echo "${root}"; exit 0; fi\nexit ${fail ? 1 : 0}\n`, { mode: 0o755 })
-  writeFileSync(join(bin, 'npm.cmd'), `@echo off\r\nif "%1"=="root" (echo ${root}& exit /b 0)\r\nexit /b ${fail ? 1 : 0}\r\n`)
+  // The arguments reach a command file in quotes; %~1 is the first one without them.
+  writeFileSync(join(bin, 'npm.cmd'), `@echo off\r\nif "%~1"=="root" (echo ${root}& exit /b 0)\r\nexit /b ${fail ? 1 : 0}\r\n`)
   const key = Object.keys(process.env).find(name => name.toUpperCase() === 'PATH') || 'PATH'
   return { root: join(root, 'hirify-cli'), env: { [key]: bin + delimiter + process.env[key] } }
 }
