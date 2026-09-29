@@ -9,7 +9,7 @@ import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, dirname, delimiter } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import { installSkill, installGlobally, agentDirectories } from '../bin/lib/setup.js'
@@ -85,7 +85,7 @@ function npm({ version, fail = false } = {}) {
   const dir = home(); const calls = []
   if (version) { mkdirSync(join(dir, 'hirify-cli'), { recursive: true }); writeFileSync(join(dir, 'hirify-cli', 'package.json'), JSON.stringify({ name: 'hirify-cli', version })) }
   const run = async (command, args, options) => { calls.push({ command, args, env: options.env }); if (args[0] === 'root') return { code: 0, stdout: dir + '\n' }; return { code: fail ? 1 : 0, stdout: '', stderr: 'synthetic-private-error' } }
-  return { run, calls }
+  return { run, calls, root: dir }
 }
 
 test('a current global installation is left alone', async () => {
@@ -94,13 +94,22 @@ test('a current global installation is left alone', async () => {
   assert.equal(f.calls.filter(call => call.args[0] === 'install').length, 0)
 })
 
-test('the running version is installed exactly, without scripts and without the settings of npx', async () => {
+test('the running version is installed exactly, without scripts, with the npm settings of the person', async () => {
   const f = npm({ version: '0.5.4' })
-  const result = await installGlobally({ version: '0.6.0', env: { PATH: '/bin', npm_command: 'exec', npm_config_prefix: '/tmp/npx', INIT_CWD: '/tmp' }, run: f.run })
+  // A prefix of one's own is how people install global packages without administrator rights.
+  const env = { PATH: '/bin', NPM_CONFIG_PREFIX: '/home/person/.npm-global', npm_config_userconfig: '/home/person/custom.npmrc', npm_command: 'exec' }
+  const result = await installGlobally({ version: '0.6.0', env, run: f.run })
   assert.deepEqual(result, { installed: true, version: '0.6.0', changed: true })
   const install = f.calls.find(call => call.args[0] === 'install')
   assert.deepEqual(install.args, ['install', '--global', '--ignore-scripts', '--no-audit', '--no-fund', 'hirify-cli@0.6.0'])
-  assert.deepEqual(install.env, { PATH: '/bin' })
+  for (const call of f.calls) assert.deepEqual(call.env, env, 'npm looks for the global directory and installs with the same settings')
+})
+
+test('a newer global installation is kept and says where its own skill is', async () => {
+  const f = npm({ version: '0.7.0' })
+  const result = await installGlobally({ version: '0.6.0', env: {}, run: f.run })
+  assert.deepEqual(result, { installed: true, version: '0.7.0', changed: false, root: join(f.root, 'hirify-cli') })
+  assert.equal(f.calls.filter(call => call.args[0] === 'install').length, 0)
 })
 
 test('a failed or missing npm is a result, so the other setup steps still run', async () => {
@@ -127,6 +136,20 @@ test('hirify init runs the steps that were not skipped and reports each one', as
   const keyed = await cli(['init', '--no-install', '--json'], { dir, env: { HIRIFY_KEY: 'synthetic-key' } })
   assert.equal(keyed.code, 0, keyed.stderr)
   assert.deepEqual(JSON.parse(keyed.stdout).sign_in, { signed_in: true, already_signed_in: true, source: 'environment' })
+})
+
+// npm is a script on PATH here; the Windows launcher rules are not what this test is about.
+test('hirify init takes the skill from a newer CLI that is already installed', { skip: process.platform === 'win32' }, async () => {
+  const dir = home('.claude')
+  const global = join(dir, 'global', 'hirify-cli')
+  mkdirSync(join(global, 'skills', 'hirify'), { recursive: true })
+  writeFileSync(join(global, 'package.json'), JSON.stringify({ name: 'hirify-cli', version: '99.0.0' }))
+  writeFileSync(join(global, 'skills', 'hirify', 'SKILL.md'), 'the skill of the newer CLI')
+  mkdirSync(join(dir, 'bin')); writeFileSync(join(dir, 'bin', 'npm'), `#!/bin/sh\necho "${join(dir, 'global')}"\n`, { mode: 0o755 })
+  const r = await cli(['init', '--no-login', '--json'], { dir, env: { PATH: join(dir, 'bin') + delimiter + process.env.PATH } })
+  assert.equal(r.code, 0, r.stderr)
+  assert.deepEqual(JSON.parse(r.stdout).cli, { installed: true, version: '99.0.0', changed: false })
+  assert.equal(readFileSync(join(dir, '.claude', 'skills', 'hirify', 'SKILL.md'), 'utf8'), 'the skill of the newer CLI')
 })
 
 test('hirify init keeps the skill when sign-in cannot start, and says so', async () => {

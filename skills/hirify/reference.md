@@ -65,8 +65,9 @@ outlives every change to them.
 `hirify login` prints a link, opens the browser where it can and waits until the person confirms
 access. An agent on a local desktop may run it and ask the person to confirm. `--no-browser`
 disables launching but still needs a reachable callback; SSH requires `--callback-port` and a
-matching port forward. CI should use `HIRIFY_KEY` or `hirify auth --stdin`. Over SSH, in CI or
-without a display a new browser login fails promptly unless manual mode was explicit.
+matching port forward. CI should use `HIRIFY_KEY` or `hirify auth --stdin`. Over SSH, and without
+a terminal in CI or with no display, a new browser login fails promptly unless manual mode was
+explicit.
 `npx -y hirify-cli@latest init` installs the CLI and this skill and then signs in; `hirify skill`
 installs the skill alone.
 Access is stored under an absolute XDG_CONFIG_HOME or `~/.config/hirify`, with private file permissions

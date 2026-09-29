@@ -611,6 +611,9 @@ const INTRO = `hirify - job search for AI agents
 Hirify is a job board. This CLI is how an agent works it for someone: the same vacancies, the
 same saved filters and the same account they have at hirify.me.
 
+Setting up
+  npx -y hirify-cli@latest init installs this CLI and the agent's skill, then opens sign-in.
+
 Signing in
   hirify login prints a link and tries the browser when available. A person confirms access.
   Manual sign-in: hirify login --no-browser. For automation, use HIRIFY_KEY or hirify auth --stdin; get a key at

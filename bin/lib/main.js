@@ -72,11 +72,15 @@ export async function main(argv = process.argv.slice(2), { baseRoot = ownRoot, b
       // The steps that need nobody go first; sign-in waits for the person and comes last.
       const { installGlobally, installSkill, describeSkill } = await import('./setup.js')
       const result = {}
+      let skillRoot = ownRoot
       if (!command.values['no-install']) {
         output.progress('Installing the Hirify CLI...')
-        result.cli = await installGlobally({ version: pkg.version, signal, env: config.env })
+        // A newer CLI found on this computer stays, and the skill is taken from it.
+        const { root, ...cli } = await installGlobally({ version: pkg.version, signal, env: config.env })
+        result.cli = cli
+        if (root) skillRoot = root
       }
-      try { result.skill = installSkill({ packageRoot: ownRoot, env: config.env }) }
+      try { result.skill = installSkill({ packageRoot: skillRoot, env: config.env }) }
       catch (error) { if (!(error instanceof CliError)) throw error; result.skill = { error: error.code, message: error.message, agents: [] } }
       if (!command.values['no-login']) {
         let source = 'none'

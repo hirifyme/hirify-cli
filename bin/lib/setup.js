@@ -36,7 +36,7 @@ const reason = error => ['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT', 'ENOTDI
 
 /**
  * Install the skill carried by this package: one shared copy under `~/.agents/skills`, linked into
- * every agent found here. The skill and the CLI come from the same package, so they always match.
+ * every agent found here. The skill comes from the package of the CLI it is for, so the two match.
  * An agent that cannot be written to is reported and does not stop the others.
  */
 export function installSkill({ packageRoot, env = process.env, home = homedir(), platform = process.platform } = {}) {
@@ -70,23 +70,22 @@ export function installSkill({ packageRoot, env = process.env, home = homedir(),
   return { skill: SKILL_NAME, path, agents }
 }
 
-/** npm started by npx inherits its settings; a nested install must see the person's own. */
-function ownEnvironment(env) {
-  return Object.fromEntries(Object.entries(env).filter(([key]) => !/^npm_/i.test(key) && key !== 'INIT_CWD'))
-}
-
 /**
- * Put the CLI on PATH with the person's own npm. A failure is a result, not an error: without a
- * global installation every command still runs as `npx -y hirify-cli <command>`.
+ * Put the CLI on PATH with the person's own npm and its settings: the environment goes to npm as
+ * it is, because what npx adds to it is the same configuration, already resolved. A failure is a
+ * result, not an error: without a global installation every command still runs as
+ * `npx -y hirify-cli <command>`. A newer global installation is kept, never downgraded, and its
+ * `root` says where the skill that matches it is.
  */
 export async function installGlobally({ version, signal, env = process.env, run = runProcess } = {}) {
-  const options = { signal, env: ownEnvironment(env) }
+  const options = { signal, env }
   let root
   try { root = await run('npm', ['root', '--global'], { ...options, timeout: 10000 }) }
   catch (error) { if (signal?.aborted) throw error; return { installed: false, reason: 'npm_unavailable' } }
   if (root.code !== 0 || !root.stdout.trim()) return { installed: false, reason: 'npm_unavailable' }
-  const current = readJSON(join(root.stdout.trim(), PACKAGE_NAME, 'package.json'))
-  if (current?.name === PACKAGE_NAME && semver.valid(current.version) && semver.gte(current.version, version)) return { installed: true, version: current.version, changed: false }
+  const location = join(root.stdout.trim(), PACKAGE_NAME)
+  const current = readJSON(join(location, 'package.json'))
+  if (current?.name === PACKAGE_NAME && semver.valid(current.version) && semver.gte(current.version, version)) return { installed: true, version: current.version, changed: false, ...(semver.gt(current.version, version) && { root: location }) }
   let result
   try { result = await run('npm', ['install', '--global', '--ignore-scripts', '--no-audit', '--no-fund', `${PACKAGE_NAME}@${version}`], { ...options, timeout: 180000 }) }
   catch (error) { if (signal?.aborted) throw error; return { installed: false, reason: 'install_failed' } }

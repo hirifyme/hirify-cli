@@ -16,10 +16,11 @@ then signs in. Until then use `npx -y hirify-cli <command>`. Global installs upd
 pin an exact version with `HIRIFY_NO_AUTO_UPDATE=1`.
 
 To sign in, run `hirify login`; the person confirms access in the browser within five minutes.
-Over SSH, in CI or with no display it fails at once. `--no-browser` is manual callback login.
-SSH needs `--callback-port` with a matching SSH local port forward. Local agents reuse the person's
-saved sign-in when permitted to access the same configuration directory. CI and separate containers
-can use `HIRIFY_KEY` or `hirify auth --stdin`; never put a key in a command, log or chat.
+It fails at once over SSH, and without a terminal in CI or with no display. `--no-browser` is
+manual callback login. SSH needs `--callback-port` with a matching SSH local port forward. Local
+agents reuse the person's saved sign-in when permitted to access the same configuration directory.
+CI and separate containers can use `HIRIFY_KEY` or `hirify auth --stdin`; never put a key in a
+command, log or chat.
 `hirify auth status --json` identifies the local source. Environment keys override saved access;
 logout is local and does not unset them. Use `hirify login --force` to replace expired access.
 

@@ -46,7 +46,7 @@ protect the exchange. The CLI reports success after access has been saved, indep
 | Local desktop terminal | Prints the link, tries the browser, waits for confirmation |
 | Linux without a display | Prints the link; does not promise or try a graphical browser |
 | Agent shell on a local desktop | Prints the link, tries the browser, waits for confirmation |
-| CI, or no terminal and no display | Fails promptly if a new browser sign-in is needed; use a key or explicit manual login |
+| No terminal in CI, or no terminal and no display | Fails promptly if a new browser sign-in is needed; use a key or explicit manual login |
 | SSH | Requires explicit manual login and a forwarded fixed callback port, or a key |
 | Container | Use a key, or manual login only if the browser can reach the container's loopback callback |
 | WSL | Uses the maintained browser launcher when local and interactive; verify Windows-to-WSL loopback on your setup |
