@@ -3,7 +3,12 @@ export function environment({ env = process.env, platform = process.platform, is
   const remote = Boolean(env.SSH_CONNECTION || env.SSH_TTY)
   const wsl = platform === 'linux' && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP)
   const gui = platform !== 'linux' || Boolean(env.DISPLAY || env.WAYLAND_DISPLAY || wsl)
-  return { remote, wsl, interactive: isTTY, gui, canOpen: isTTY && !remote && gui }
+  // A build server without a terminal has nobody to confirm access, whatever its platform
+  // says about a display. A person at a terminal is unaffected.
+  const unattended = Boolean(env.CI) && !isTTY
+  // An agent runs commands without a terminal of its own, on a desktop where a browser can open
+  // and the person can confirm. So a missing terminal alone does not rule sign-in out.
+  return { remote, wsl, interactive: isTTY, gui, unattended, canOpen: !remote && !unattended && gui }
 }
 export const canOpenBrowser = options => environment(options).canOpen
 /** A launcher acknowledgement is not proof that a browser window appeared. */

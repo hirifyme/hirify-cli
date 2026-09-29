@@ -250,8 +250,12 @@ test('a browser is not asked for where nobody would see it', () => {
   assert.equal(canOpenBrowser({ env: { SSH_CONNECTION: '10.0.0.1 22' }, platform: 'linux', isTTY: true }), false)
   // A Linux session with no display has nothing to open it with.
   assert.equal(canOpenBrowser({ env: {}, platform: 'linux', isTTY: true }), false)
-  // Output that is not a terminal is being read by a program, not by a person.
-  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0' }, platform: 'linux', isTTY: false }), false)
+  // An agent runs commands without a terminal, on a desktop where the person sees the browser.
+  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0' }, platform: 'linux', isTTY: false }), true)
+  // A build server has a platform and sometimes a display, but nobody to confirm access.
+  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0', CI: 'true' }, platform: 'linux', isTTY: false }), false)
+  // A person at a terminal is there to confirm, whatever the environment is called.
+  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0', CI: 'true' }, platform: 'linux', isTTY: true }), true)
 })
 
 // ── read: the card ─────────────────────────────────────────────────────────
@@ -904,9 +908,10 @@ test('the npm package name and install instructions stay aligned', () => {
 
   assert.equal(pkg.name, 'hirify-cli')
   assert.match(readme, /npm install -g hirify-cli/)
-  assert.match(readme, /npx hirify-cli login/)
+  assert.match(readme, /npx -y hirify-cli@latest init/)
   assert.match(readFileSync(join(ROOT, 'README.md'), 'utf8'), /npm install -g hirify-cli/)
   assert.ok(!readme.includes('npx hirify login'))
+  assert.ok(!readme.includes('npx hirify init'))
 })
 
 test('read is in the help', async () => {
@@ -1431,8 +1436,10 @@ test('a default search of twenty vacancies fits the context budget after field s
 
 test('the skill stays within the harness budget', async () => {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-  const bytes = Buffer.byteLength(readFileSync(join(root, 'skills/hirify/SKILL.md')))
-  assert.ok(bytes <= 8192, `SKILL.md is ${bytes} bytes, over the 8192 budget`)
+  // A Windows checkout stores CRLF line endings, so the budget is counted with them.
+  const text = readFileSync(join(root, 'skills/hirify/SKILL.md'), 'utf8').replace(/\r?\n/g, '\r\n')
+  const bytes = Buffer.byteLength(text)
+  assert.ok(bytes <= 8192, `SKILL.md is ${bytes} bytes with CRLF line endings, over the 8192 budget`)
 })
 
 // ── exit codes are a stable contract ───────────────────────────────────────

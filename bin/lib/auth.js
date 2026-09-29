@@ -73,7 +73,7 @@ export function createAuth({ config, store, http, signal, output, event, secrets
       if (current?.kind === 'oauth') { await access(); return { signed_in: true, already_signed_in: true, source: config.envKey ? 'environment' : 'oauth' } }
     }
     const info = environment()
-    if (!noBrowser && (!info.interactive || info.remote)) throw new CliError('interaction_required', 'This terminal cannot complete browser sign-in automatically. Use HIRIFY_KEY or hirify auth --stdin. For manual sign-in, use hirify login --no-browser; over SSH, also choose --callback-port and forward that port.')
+    if (!noBrowser && (info.remote || info.unattended || (!info.interactive && !info.gui))) throw new CliError('interaction_required', 'This terminal cannot complete browser sign-in automatically. Use HIRIFY_KEY or hirify auth --stdin. For manual sign-in, use hirify login --no-browser; over SSH, also choose --callback-port and forward that port.')
     if (info.remote && noBrowser && !port) throw new CliError('remote_callback_required', 'Browser callbacks must reach this machine. Choose --callback-port and forward that port over SSH, or use HIRIFY_KEY.')
     const generation = await store.beginLogin({ force })
     const endpoints = await discover()

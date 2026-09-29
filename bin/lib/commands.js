@@ -611,6 +611,9 @@ const INTRO = `hirify - job search for AI agents
 Hirify is a job board. This CLI is how an agent works it for someone: the same vacancies, the
 same saved filters and the same account they have at hirify.me.
 
+Setting up
+  npx -y hirify-cli@latest init installs this CLI and the agent's skill, then opens sign-in.
+
 Signing in
   hirify login prints a link and tries the browser when available. A person confirms access.
   Manual sign-in: hirify login --no-browser. For automation, use HIRIFY_KEY or hirify auth --stdin; get a key at
@@ -691,7 +694,7 @@ If a command you need is not here
   they say what a thing costs and what a refusal means, and this one cannot.
 
 If you are an agent
-  Install the working rules once: npx skills add hirifyme/hirify-cli. They cover the order
+  Install the working rules once: hirify skill. They cover the order
   above, what needs the person's permission before you do it, and what each refusal means.
 
 Use --json for structured results and --error-format=json for structured errors.
@@ -882,15 +885,9 @@ async function cmdFilterGuide() {
   out(res.body, () => console.log(guide))
 }
 
-/** The skill ships through skills.sh now: one command installs it into every harness. */
-function cmdSkill() {
-  console.log('The rules for your agent install with one command:\n\n  npx skills add hirifyme/hirify-cli\n')
-  console.log('It puts them where your agent reads them: Claude Code, Codex, Cursor, OpenCode and others.')
-}
-
 
 return {
-  intro: cmdIntro, skill: cmdSkill,
+  intro: cmdIntro,
   'account show': cmdAccountShow,
   'vacancy search': cmdVacancySearch, 'vacancy read': cmdVacancyRead, 'vacancy reveal': cmdVacancyReveal, 'vacancy apply': cmdVacancyApply,
   'vacancy hide': cmdVacancyHide, 'company hide': cmdCompanyHide, 'hidden list': cmdHiddenList,

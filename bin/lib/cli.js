@@ -1,10 +1,11 @@
 import { CliError, redact, safeText } from './errors.js'
 const ARGUMENTS = { auth: '[<key>]', update: '[<version>]', 'vacancy search': '[<query>]', 'vacancy read': '<slug>', 'vacancy reveal': '<slug>', 'vacancy apply': '<slug>', 'vacancy hide': '<slug>...', 'company hide': '[<name>...]', 'feed show': '<id>', 'feed create': '<name>', 'feed deliver': '<id>', 'webhook create': '<name> <url>', 'feedback send': '<bug|feature> <title>', 'api call': '<capability>', 'capabilities show': '<capability>' }
 const GLOBAL = ['json', 'fields', 'error-format', 'debug', 'timeout', 'help']
-export const BOOLEAN_FLAGS = new Set(['json', 'debug', 'help', 'force', 'no-browser', 'stdin', 'telegram', 'no-telegram', 'no-webhook', 'check', 'rollback', 'undo'])
+export const BOOLEAN_FLAGS = new Set(['json', 'debug', 'help', 'force', 'no-browser', 'no-install', 'no-login', 'stdin', 'telegram', 'no-telegram', 'no-webhook', 'check', 'rollback', 'undo'])
 export const COMMANDS = {
   intro: { args: [0, 0], description: 'what this can do, and in what order' },
   version: { args: [0, 0], description: 'installed version' },
+  init: { args: [0, 0], flags: ['no-install', 'no-login', 'no-browser', 'callback-port'], description: 'install the CLI and the skill, then sign in' },
   skill: { args: [0, 0], description: 'install the working rules for your agent' },
   login: { args: [0, 0], flags: ['force', 'no-browser', 'callback-port'], description: 'sign in through your browser' },
   logout: { args: [0, 0], description: 'sign out on this computer' },
@@ -98,11 +99,11 @@ export function parse(argv) {
   if (name === 'auth' && words.length && (!words[0].trim() || /[\r\n]/.test(words[0]))) throw new CliError('invalid_arguments', 'The key must be nonempty and contain no line breaks.')
   if (name === 'feedback send' && (!['bug', 'feature'].includes(words[0]) || !value('body'))) throw new CliError('invalid_arguments', 'Use hirify feedback send bug|feature <title> --body <text>.')
   const args = [...parsed.options].flatMap(([key, values]) => values.map(v => v === true ? `--${key}` : `--${key}=${v}`))
-  return { name, words, args, values: Object.fromEntries([...parsed.options].map(([k, v]) => [k, v[0]])), json: Boolean(value('json')), errorJSON: value('error-format') === 'json', timeout: Number(value('timeout') || (name === 'login' ? 360 : name === 'update' ? 300 : 30)) * 1000 }
+  return { name, words, args, values: Object.fromEntries([...parsed.options].map(([k, v]) => [k, v[0]])), json: Boolean(value('json')), errorJSON: value('error-format') === 'json', timeout: Number(value('timeout') || (name === 'init' ? 600 : name === 'login' ? 360 : name === 'update' ? 300 : 30)) * 1000 }
 }
 export function help(topic = '') {
   const entries = Object.entries(COMMANDS).filter(([name]) => !topic || name === topic || name.startsWith(topic + ' '))
-  return `hirify - job search for AI agents\n\n${(entries.length ? entries : Object.entries(COMMANDS)).map(([name, spec]) => `  hirify ${(name + (ARGUMENTS[name] ? ' ' + ARGUMENTS[name] : '')).padEnd(35)} ${spec.description}${spec.flags?.length ? `\n    ${spec.flags.map(f => '--' + f + (BOOLEAN_FLAGS.has(f) ? '' : ' <value>')).join('  ')}` : ''}`).join('\n')}\n\nGlobal options: --json, --fields a,b, --error-format json|text, --timeout <seconds>, --debug, --help.\nUse -- to end options; --name=value and --name value are supported.\nLists and search are free. Vacancy read, reveal and apply have separate allowances.\nCheck them with hirify account show. Apply sends a real application: ask the person first.\nLocal agents reuse saved sign-in when allowed. Token renewal needs write access.\nSandbox access denied: request permission for the command; do not copy tokens.\nHeadless/CI: HIRIFY_KEY or hirify auth --stdin. Manual login: --no-browser.\nSSH: forward the chosen --callback-port to the same loopback port on the CLI host.\nRules for your agent: npx skills add hirifyme/hirify-cli\n`
+  return `hirify - job search for AI agents\n\n${(entries.length ? entries : Object.entries(COMMANDS)).map(([name, spec]) => `  hirify ${(name + (ARGUMENTS[name] ? ' ' + ARGUMENTS[name] : '')).padEnd(35)} ${spec.description}${spec.flags?.length ? `\n    ${spec.flags.map(f => '--' + f + (BOOLEAN_FLAGS.has(f) ? '' : ' <value>')).join('  ')}` : ''}`).join('\n')}\n\nGlobal options: --json, --fields a,b, --error-format json|text, --timeout <seconds>, --debug, --help.\nUse -- to end options; --name=value and --name value are supported.\nLists and search are free. Vacancy read, reveal and apply have separate allowances.\nCheck them with hirify account show. Apply sends a real application: ask the person first.\nLocal agents reuse saved sign-in when allowed. Token renewal needs write access.\nSandbox access denied: request permission for the command; do not copy tokens.\nHeadless/CI: HIRIFY_KEY or hirify auth --stdin. Manual login: --no-browser.\nSSH: forward the chosen --callback-port to the same loopback port on the CLI host.\nSet up the CLI, the skill and sign-in: hirify init. The skill alone: hirify skill\n`
 }
 export function createOutput({ stdout = process.stdout, stderr = process.stderr, json = false, errorJSON = false, secrets = new Set() } = {}) {
   let closed = false
