@@ -12,12 +12,11 @@ has every command in full, and `hirify intro` is the server's guide.
 
 Package: `hirify-cli`; command: `hirify`; Node >=18.
 If `hirify` is missing, run `npx -y hirify-cli@latest init`: it installs the CLI and this skill,
-then signs in. Until then use `npx -y hirify-cli <command>`. Global installs update automatically;
-for reproducible work use an exact version and `HIRIFY_NO_AUTO_UPDATE=1`.
+then signs in. Until then use `npx -y hirify-cli <command>`. Global installs update themselves;
+pin an exact version with `HIRIFY_NO_AUTO_UPDATE=1`.
 
-To sign in, run `hirify login` and ask the person to confirm access in the browser page it opens.
-Over SSH, in CI or without a display it fails at once: then the person signs in or gives a key.
-`--no-browser` is manual callback login, not device flow.
+To sign in, run `hirify login`; the person confirms access in the browser within five minutes.
+Over SSH, in CI or with no display it fails at once. `--no-browser` is manual callback login.
 SSH needs `--callback-port` with a matching SSH local port forward. Local agents reuse the person's
 saved sign-in when permitted to access the same configuration directory. CI and separate containers
 can use `HIRIFY_KEY` or `hirify auth --stdin`; never put a key in a command, log or chat.

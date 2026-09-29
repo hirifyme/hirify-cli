@@ -32,7 +32,7 @@ const real = path => { try { return realpathSync(path) } catch { return path } }
 const remove = path => { if (entry(path)) rmSync(path, { recursive: true, force: true }) }
 const readJSON = file => { try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return null } }
 // OS messages may carry private paths, so only the code is reported.
-const reason = error => ['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT', 'ENOTDIR'].includes(error?.code) ? error.code : 'unknown'
+const reason = error => ['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT', 'ENOTDIR', 'ENOENT', 'EEXIST', 'ELOOP'].includes(error?.code) ? error.code : 'unknown'
 
 /**
  * Install the skill carried by this package: one shared copy under `~/.agents/skills`, linked into
@@ -98,6 +98,6 @@ export function describeSkill(result) {
   const done = result.agents.filter(item => item.installed).map(item => item.agent)
   const failed = result.agents.filter(item => !item.installed).map(item => `${item.agent} (${item.reason})`)
   const lines = [done.length ? `The skill is installed for ${done.join(', ')}.` : `The skill is saved in ${result.path}. No supported agent was found on this computer.`]
-  if (failed.length) lines.push(`It could not be installed for ${failed.join(', ')}.`)
+  if (failed.length) lines.push(`It could not be installed for ${failed.join(', ')}. Check that the agent's skills directory is a folder you can write to, then run hirify skill.`)
   return lines
 }

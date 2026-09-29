@@ -253,7 +253,9 @@ test('a browser is not asked for where nobody would see it', () => {
   // An agent runs commands without a terminal, on a desktop where the person sees the browser.
   assert.equal(canOpenBrowser({ env: { DISPLAY: ':0' }, platform: 'linux', isTTY: false }), true)
   // A build server has a platform and sometimes a display, but nobody to confirm access.
-  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0', CI: 'true' }, platform: 'linux', isTTY: true }), false)
+  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0', CI: 'true' }, platform: 'linux', isTTY: false }), false)
+  // A person at a terminal is there to confirm, whatever the environment is called.
+  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0', CI: 'true' }, platform: 'linux', isTTY: true }), true)
 })
 
 // ── read: the card ─────────────────────────────────────────────────────────
@@ -1434,8 +1436,10 @@ test('a default search of twenty vacancies fits the context budget after field s
 
 test('the skill stays within the harness budget', async () => {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-  const bytes = Buffer.byteLength(readFileSync(join(root, 'skills/hirify/SKILL.md')))
-  assert.ok(bytes <= 8192, `SKILL.md is ${bytes} bytes, over the 8192 budget`)
+  // A Windows checkout stores CRLF line endings, so the budget is counted with them.
+  const text = readFileSync(join(root, 'skills/hirify/SKILL.md'), 'utf8').replace(/\r?\n/g, '\r\n')
+  const bytes = Buffer.byteLength(text)
+  assert.ok(bytes <= 8192, `SKILL.md is ${bytes} bytes with CRLF line endings, over the 8192 budget`)
 })
 
 // ── exit codes are a stable contract ───────────────────────────────────────
