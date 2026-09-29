@@ -55,7 +55,7 @@ export async function main(argv = process.argv.slice(2), { baseRoot = ownRoot, b
     const auth = createAuth({ config, store, http, signal, output, event, secrets })
     const api = createApi({ config, http, auth, output })
     const updater = createUpdater({ config, http, signal, output, event, packageRoot: ownRoot, baseRoot, baseVersion })
-    const local = ['auth', 'auth status', 'logout', 'doctor', 'skill', 'update'].includes(command.name)
+    const local = ['auth', 'auth status', 'logout', 'doctor', 'init', 'skill', 'update'].includes(command.name)
     if (!skipUpdate && !local) next = await updater.automatic()
     if (next) {
       // Dispose every timer and signal handler before handing off, at most once per invocation.
@@ -63,6 +63,36 @@ export async function main(argv = process.argv.slice(2), { baseRoot = ownRoot, b
       const result = await auth.login({ force: Boolean(command.values.force), noBrowser: Boolean(command.values['no-browser']), port: Number(command.values['callback-port'] || 0), consentMs: Math.min(command.timeout, 300000) })
       if (command.json) output.json(result)
       else { output.console.log(result.already_signed_in ? 'Already signed in. Use hirify login --force to sign in again.' : 'Signed in. Access saved on this computer.'); if (result.environment_override || result.source === 'environment') output.progress('HIRIFY_KEY is set and takes precedence over the saved sign-in.'); output.console.log('Your plan and allowances: hirify account show') }
+    } else if (command.name === 'skill') {
+      const { installSkill, describeSkill } = await import('./setup.js')
+      const result = installSkill({ packageRoot: ownRoot, env: config.env })
+      if (command.json) output.json(result); else for (const line of describeSkill(result)) output.console.log(line)
+      if (result.agents.some(item => !item.installed)) exitCode = 1
+    } else if (command.name === 'init') {
+      // The steps that need nobody go first; sign-in waits for the person and comes last.
+      const { installGlobally, installSkill, describeSkill } = await import('./setup.js')
+      const result = {}
+      if (!command.values['no-install']) {
+        output.progress('Installing the Hirify CLI...')
+        result.cli = await installGlobally({ version: pkg.version, signal, env: config.env })
+      }
+      try { result.skill = installSkill({ packageRoot: ownRoot, env: config.env }) }
+      catch (error) { if (!(error instanceof CliError)) throw error; result.skill = { error: error.code, message: error.message, agents: [] } }
+      if (!command.values['no-login']) {
+        let source = 'none'
+        try { source = auth.status().source } catch {}
+        if (['environment', 'key'].includes(source)) result.sign_in = { signed_in: true, already_signed_in: true, source }
+        else try { result.sign_in = await auth.login({ noBrowser: Boolean(command.values['no-browser']), port: Number(command.values['callback-port'] || 0), consentMs: Math.min(command.timeout, 300000) }) }
+        catch (error) { if (!(error instanceof CliError) || signal.aborted) throw error; result.sign_in = { signed_in: false, error: error.code, message: error.message } }
+      }
+      if (command.json) output.json(result)
+      else {
+        if (result.cli) output.console.log(result.cli.installed ? `Hirify CLI ${result.cli.version} is installed. The command is: hirify` : `The CLI could not be installed globally (${result.cli.reason}). Every command still works as: npx -y hirify-cli <command>`)
+        if (result.skill.error) output.console.log(result.skill.message); else for (const line of describeSkill(result.skill)) output.console.log(line)
+        if (result.sign_in) output.console.log(result.sign_in.signed_in ? (result.sign_in.already_signed_in ? 'Already signed in.' : 'Signed in. Access saved on this computer.') : result.sign_in.message)
+        if (result.sign_in?.signed_in) output.console.log('Next: ask your agent to look at your Hirify profile and saved searches.')
+      }
+      if (result.cli?.installed === false || result.skill.error || result.skill.agents.some(item => !item.installed) || result.sign_in?.signed_in === false) exitCode = 1
     } else if (command.name === 'auth') {
       secrets.add(command.words[0])
       await store.commit({ kind: 'key', access_token: command.words[0] })
@@ -90,8 +120,7 @@ export async function main(argv = process.argv.slice(2), { baseRoot = ownRoot, b
       else { const result = await updater.install(target, { pin: Boolean(command.words[0] || config.env.HIRIFY_VERSION_PIN) }); if (command.json) output.json(result); else output.console.log(`Hirify CLI ${result.version} is ready for the next command.${result.pinned ? ' This version is pinned.' : ''}`) }
     } else {
       const commands = createCommands({ api, output, config, signal, event, fields: command.values.fields })
-      if (command.name === 'skill' && command.json) output.json({ install: 'npx skills add hirifyme/hirify-cli' })
-      else await commands[command.name](command.args, command.words)
+      await commands[command.name](command.args, command.words)
     }
   } catch (error) { exitCode = output.error(error) }
   finally { await cleanup(); await output.flush().catch(() => { exitCode = 1 }); output.dispose() }

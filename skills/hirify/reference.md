@@ -62,10 +62,13 @@ outlives every change to them.
 
 ## Signing in
 
-A person runs `hirify login`, opens the printed link and confirms access. The CLI tries a browser
-only where appropriate. `--no-browser` disables launching but still needs a reachable callback;
-SSH requires `--callback-port` and a matching port forward. CI/agents should use `HIRIFY_KEY` or
-`hirify auth --stdin`. A new non-interactive browser login fails promptly unless manual mode was explicit.
+`hirify login` prints a link, opens the browser where it can and waits until the person confirms
+access. An agent on a local desktop may run it and ask the person to confirm. `--no-browser`
+disables launching but still needs a reachable callback; SSH requires `--callback-port` and a
+matching port forward. CI should use `HIRIFY_KEY` or `hirify auth --stdin`. Over SSH, in CI or
+without a display a new browser login fails promptly unless manual mode was explicit.
+`npx -y hirify-cli@latest init` installs the CLI and this skill and then signs in; `hirify skill`
+installs the skill alone.
 Access is stored under an absolute XDG_CONFIG_HOME or `~/.config/hirify`, with private file permissions
 and atomic writes. `auth status --json` shows its source. `logout` clears local access, not server
 access or environment keys. `HIRIFY_KEY` wins over the saved sign-in. Use `login --force` to replace

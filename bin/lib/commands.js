@@ -691,7 +691,7 @@ If a command you need is not here
   they say what a thing costs and what a refusal means, and this one cannot.
 
 If you are an agent
-  Install the working rules once: npx skills add hirifyme/hirify-cli. They cover the order
+  Install the working rules once: hirify skill. They cover the order
   above, what needs the person's permission before you do it, and what each refusal means.
 
 Use --json for structured results and --error-format=json for structured errors.
@@ -882,15 +882,9 @@ async function cmdFilterGuide() {
   out(res.body, () => console.log(guide))
 }
 
-/** The skill ships through skills.sh now: one command installs it into every harness. */
-function cmdSkill() {
-  console.log('The rules for your agent install with one command:\n\n  npx skills add hirifyme/hirify-cli\n')
-  console.log('It puts them where your agent reads them: Claude Code, Codex, Cursor, OpenCode and others.')
-}
-
 
 return {
-  intro: cmdIntro, skill: cmdSkill,
+  intro: cmdIntro,
   'account show': cmdAccountShow,
   'vacancy search': cmdVacancySearch, 'vacancy read': cmdVacancyRead, 'vacancy reveal': cmdVacancyReveal, 'vacancy apply': cmdVacancyApply,
   'vacancy hide': cmdVacancyHide, 'company hide': cmdCompanyHide, 'hidden list': cmdHiddenList,

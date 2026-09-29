@@ -176,7 +176,7 @@ test('cancelled login closes callback and does not save credentials', {skip:proc
   try{const r=await f.task.done;assert.equal(r.code,130,r.stderr);assert.equal(JSON.parse(r.stderr.trim().split('\n').at(-1)).error.code,'cancelled');assert.ok(!existsSync(join(f.cfg,'hirify/auth.json')));await assert.rejects(fetch(callback))}finally{await f.s.close()}
 })
 test('noninteractive login fails immediately, SSH requires a forwarded fixed port',async()=>{
-  const a=await run(['login','--error-format=json']);assert.equal(JSON.parse(a.stderr).error.code,'interaction_required')
+  const a=await run(['login','--error-format=json'],{env:{CI:'1'}});assert.equal(JSON.parse(a.stderr).error.code,'interaction_required')
   const b=await run(['login','--no-browser','--error-format=json'],{env:{SSH_CONNECTION:'test'}});assert.equal(JSON.parse(b.stderr).error.code,'remote_callback_required')
 })
 for(const value of [{access_token:{}},{access_token:'x',token_type:'MAC'},{access_token:'x',token_type:'Bearer',expires_in:-1},{access_token:'x',token_type:'Bearer',expires_in:'no'},{access_token:'x',token_type:'Bearer',scope:[]}])test('malformed token response cannot become stored access',()=>assert.throws(()=>tokenResponse(value),{name:'CliError'}))
@@ -205,7 +205,14 @@ test('browser platform and environment policy includes WSL and headless',()=>{
   assert.equal(environment({platform:'darwin',env:{SSH_TTY:'x'},isTTY:true}).canOpen,false)
   assert.equal(environment({platform:'linux',env:{},isTTY:true}).canOpen,false)
   assert.equal(environment({platform:'linux',env:{WSL_INTEROP:'x'},isTTY:true}).canOpen,true)
-  assert.equal(environment({platform:'win32',env:{},isTTY:false}).canOpen,false)
+  // An agent has no terminal of its own, yet a browser can open on the desktop it runs on.
+  assert.equal(environment({platform:'win32',env:{},isTTY:false}).canOpen,true)
+  assert.equal(environment({platform:'linux',env:{},isTTY:false}).gui,false)
+  assert.equal(environment({platform:'darwin',env:{CI:'true'},isTTY:false}).canOpen,false)
+})
+test('an agent shell on a local desktop may start sign-in',async()=>{
+  // No terminal, a display and nobody's build server: sign-in proceeds to the server, which here is closed.
+  const r=await run(['login','--error-format=json'],{env:{CI:'',DISPLAY:':0'}});assert.equal(r.code,1);assert.notEqual(JSON.parse(r.stderr.trim().split('\n').at(-1)).error.code,'interaction_required')
 })
 for(const [event,value,code] of [['exit',0,'launcher_exited'],['exit',1,'nonzero_exit'],['error',{code:'ENOENT'},'launcher_missing']])test(`browser launcher reason: ${code}`,async()=>{const child=new EventEmitter();child.unref=()=>{};const promise=openBrowser('https://example.test/?a=1&b=2',{waitMs:500,launch:async()=>child});setTimeout(()=>child.emit(event,value),20);assert.equal((await promise).code,code)})
 test('browser launcher timeout is unconfirmed, not success',async()=>{const child=new EventEmitter();child.unref=()=>{};assert.equal((await openBrowser('https://example.test/',{waitMs:10,launch:async()=>child})).code,'launcher_unconfirmed')})

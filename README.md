@@ -9,15 +9,25 @@ Node 18 or newer is required. Node 22 and 24 are the primary test lanes; 18 and 
 Windows, macOS and Linux use the same npm artifact. Native desktop browser acceptance is a separate release check.
 
 ```sh
-npm install -g hirify-cli
-hirify --help
-npx skills add hirifyme/hirify-cli
+npx -y hirify-cli@latest init
 ```
 
-For a one-off sign-in, run `npx hirify-cli login`.
+One command installs the CLI globally, installs the skill for the agents found on this computer
+(Claude Code, Codex, Cursor, OpenCode, Gemini CLI, Antigravity) and signs you in through the browser.
+Run it yourself or let your agent run it. `--no-install` and `--no-login` skip a step.
+
+The same steps one by one:
+
+```sh
+npm install -g hirify-cli
+hirify skill
+hirify login
+```
+
+The skill is the agent's working rules. It comes inside the package, so it always matches the CLI;
+`npx skills add hirifyme/hirify-cli` installs the same skill through skills.sh.
 Without a global install, use `npx -y hirify-cli <command>`. npm may cache the package;
 use `npx -y hirify-cli@<version>` when the version must be reproducible.
-The skill supplies the agent's working rules; it does not install the executable.
 
 ## Sign in
 
@@ -27,15 +37,16 @@ hirify auth status --json
 ```
 
 Login prints a link first and tries the default browser when the terminal and environment permit it.
-A launcher result does not prove that a browser opened. Confirm access yourself; agents should ask
-you to do this. The callback listens only on a loopback IP, on a temporary port. PKCE and state
+A launcher result does not prove that a browser opened. Confirm access yourself; an agent that
+starts the sign-in asks you to do this. The callback listens only on a loopback IP, on a temporary port. PKCE and state
 protect the exchange. The CLI reports success after access has been saved, independently of the account summary.
 
 | Environment | Behavior |
 |---|---|
 | Local desktop terminal | Prints the link, tries the browser, waits for confirmation |
 | Linux without a display | Prints the link; does not promise or try a graphical browser |
-| Non-interactive terminal, CI, agent pipe | Fails promptly if a new browser sign-in is needed; use a key or explicit manual login |
+| Agent shell on a local desktop | Prints the link, tries the browser, waits for confirmation |
+| CI, or no terminal and no display | Fails promptly if a new browser sign-in is needed; use a key or explicit manual login |
 | SSH | Requires explicit manual login and a forwarded fixed callback port, or a key |
 | Container | Use a key, or manual login only if the browser can reach the container's loopback callback |
 | WSL | Uses the maintained browser launcher when local and interactive; verify Windows-to-WSL loopback on your setup |

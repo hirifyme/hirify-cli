@@ -250,8 +250,10 @@ test('a browser is not asked for where nobody would see it', () => {
   assert.equal(canOpenBrowser({ env: { SSH_CONNECTION: '10.0.0.1 22' }, platform: 'linux', isTTY: true }), false)
   // A Linux session with no display has nothing to open it with.
   assert.equal(canOpenBrowser({ env: {}, platform: 'linux', isTTY: true }), false)
-  // Output that is not a terminal is being read by a program, not by a person.
-  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0' }, platform: 'linux', isTTY: false }), false)
+  // An agent runs commands without a terminal, on a desktop where the person sees the browser.
+  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0' }, platform: 'linux', isTTY: false }), true)
+  // A build server has a platform and sometimes a display, but nobody to confirm access.
+  assert.equal(canOpenBrowser({ env: { DISPLAY: ':0', CI: 'true' }, platform: 'linux', isTTY: true }), false)
 })
 
 // ── read: the card ─────────────────────────────────────────────────────────
@@ -904,9 +906,10 @@ test('the npm package name and install instructions stay aligned', () => {
 
   assert.equal(pkg.name, 'hirify-cli')
   assert.match(readme, /npm install -g hirify-cli/)
-  assert.match(readme, /npx hirify-cli login/)
+  assert.match(readme, /npx -y hirify-cli@latest init/)
   assert.match(readFileSync(join(ROOT, 'README.md'), 'utf8'), /npm install -g hirify-cli/)
   assert.ok(!readme.includes('npx hirify login'))
+  assert.ok(!readme.includes('npx hirify init'))
 })
 
 test('read is in the help', async () => {

@@ -1,12 +1,12 @@
 {
   "name": "hirify-cli",
-  "version": "0.5.4",
+  "version": "0.6.0",
   "description": "Hirify CLI for AI agents: browser sign-in, job feeds, search, reading a vacancy in full, contacts to apply to, and applying on Hirify.",
   "bin": {
     "hirify": "bin/hirify.js"
   },
   "scripts": {
-    "test": "node --test scripts/test.mjs scripts/runtime.test.mjs scripts/network.test.mjs scripts/update.test.mjs scripts/storage.test.mjs",
+    "test": "node --test scripts/test.mjs scripts/runtime.test.mjs scripts/network.test.mjs scripts/update.test.mjs scripts/storage.test.mjs scripts/setup.test.mjs",
     "build": "node scripts/build.mjs",
     "test:package": "node scripts/verify-package.mjs",
     "prepublishOnly": "node scripts/prepublish-check.mjs",
