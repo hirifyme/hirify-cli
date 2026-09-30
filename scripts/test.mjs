@@ -1251,6 +1251,21 @@ test('the package ships the notice the licence obliges it to carry', async () =>
   assert.match(readFileSync(join(root, 'NOTICE'), 'utf8'), /Copyright 2026 Hirify/)
 })
 
+// ── 409: a repeat application is answered in the server's words ─────────────
+test('applying twice shows the server line with the existing application id', async () => {
+  // Since 30.09 the server answers a repeat application with 409 conflict instead of
+  // 422, and the line names the application that already exists. 0.6.2 did not expect
+  // a 409 here and printed "that command could not be completed" (regression run 30.09).
+  const { code, stderr } = await run(['vacancy', 'apply', 'senior-go-engineer'], answer(409, {
+    ok: false,
+    error: { code: 'conflict', message: 'You have already applied to this vacancy: application_id 4711.', http_status: 409, retryable: false, details: {} },
+  }))
+
+  assert.equal(code, 1)
+  assert.match(stderr, /You have already applied to this vacancy: application_id 4711\./)
+  assert.ok(!stderr.includes('could not be completed'), 'the generic line hides the application id')
+})
+
 // ── 429: the wall that answered is the wall that is named ──────────────────
 test('the applications allowance running out is named as itself', async () => {
   // It used to fall through to "you have no reveals left right now": the same defect the
