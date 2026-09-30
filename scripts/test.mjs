@@ -381,6 +381,27 @@ test('a slug with a slash in it is still asked for as one slug', async () => {
   assert.deepEqual(seen, ['/api/agent/vacancies/a%2Fb'])
 })
 
+// Production regression of 2026-09-30 (task-1100 on the server): the manifest renamed the
+// path slot of read and reveal from {slug} to {vacancy_id} and the CLI refused locally with
+// 'this call needs "vacancy_id"'. Both names must now reach the server, slug or number alike.
+test('read and reveal fill a {vacancy_id} path slot with the slug or the number given', async () => {
+  const byId = manifestDoc(CAPS.map(([id, method, path, extra]) => (
+    ['vacancies.read', 'vacancies.reveal'].includes(id) ? [id, method, path.replace('{slug}', '{vacancy_id}'), extra] : [id, method, path, extra]
+  )))
+
+  const read = await run(['vacancy', 'read', 'senior-go-engineer'], answer(200, OK_BODY), { manifest: byId })
+  assert.equal(read.code, 0)
+  assert.deepEqual(read.seen, ['/api/agent/vacancies/senior-go-engineer'])
+
+  const numeric = await run(['vacancy', 'read', '1172915', '--json'], answer(200, OK_BODY), { manifest: byId })
+  assert.equal(numeric.code, 0)
+  assert.deepEqual(numeric.seen, ['/api/agent/vacancies/1172915'])
+
+  const reveal = await run(['vacancy', 'reveal', 'senior-go-engineer'], answer(200, { data: { company: 'Acme', contacts: [] } }), { manifest: byId })
+  assert.equal(reveal.code, 0)
+  assert.deepEqual(reveal.seen, ['/api/agent/vacancies/senior-go-engineer/reveal'])
+})
+
 // ── read: refusals ─────────────────────────────────────────────────────────
 test('an unknown slug is named as an unknown slug', async () => {
   const { code, stderr } = await run(['vacancy', 'read', 'nope'], answer(404, { error: true, message: 'Vacancy not found.' }))
