@@ -483,15 +483,18 @@ async function cmdVacancyApply(args, words) {
   const res = await callCapability('applications.apply', {
     params: { slug },
     payload: { ...(profile ? { profile_id: Number(profile) } : {}), ...(cover ? { cover_letter: cover } : {}) },
-    allow: [201, 404, 422, 502],
+    allow: [201, 404, 409, 422, 502],
   })
 
   if (res.status === 404) die('there is no vacancy with that slug.')
   if (res.status === 502) throw new CliError('outcome_unknown', 'The application result could not be confirmed. Check your applications before trying again.', { status: 502 })
-  if (res.status === 422) {
+  if (res.status === 422 || res.status === 409) {
     // These come from the same rules the site applies: archived, flagged, hosted
     // elsewhere, someone else's profile. They are written to be read, so pass them on
-    // instead of flattening every one of them into "something went wrong".
+    // instead of flattening every one of them into "something went wrong". A repeat
+    // application is a 409 since 30.09 and names the existing application_id - the
+    // one line the person needs. (An action_required 409 never reaches here: the api
+    // layer raises it before any allow list is consulted.)
     die(serverMessage(res.body) || 'the application was not accepted. Please check the vacancy and the profile.')
   }
 
