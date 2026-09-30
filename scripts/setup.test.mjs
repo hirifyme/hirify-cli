@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname, delimiter } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
-import { installSkill, installGlobally, agentDirectories } from '../bin/lib/setup.js'
+import { installSkill, installGlobally, agentDirectories, describeSkill } from '../bin/lib/setup.js'
 import { CliError } from '../bin/lib/errors.js'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -67,6 +67,19 @@ test('an agent that shares the common skills directory is served by the one copy
   const result = installSkill({ packageRoot: ROOT, env: {}, home: dir })
   assert.deepEqual(result.agents, [{ agent: 'Claude Code', installed: true }])
   assert.equal(readFileSync(join(dir, '.claude', 'skills', 'hirify', 'SKILL.md'), 'utf8'), SKILL)
+})
+
+test('an agent that cannot take a link gets a copy, and the result says it is one', () => {
+  const dir = home('.claude', '.cursor')
+  let refused = 0
+  const link = (path, target, platform) => { if (target.includes('.cursor')) { refused++; throw Object.assign(new Error('no links here'), { code: 'EPERM' }) } symlinkSync(path, target, platform === 'win32' ? 'junction' : 'dir') }
+  const result = installSkill({ packageRoot: ROOT, env: {}, home: dir, link })
+  assert.equal(refused, 1)
+  assert.deepEqual(result.agents, [{ agent: 'Claude Code', installed: true }, { agent: 'Cursor', installed: true, copied: true }])
+  assert.equal(readFileSync(join(dir, '.cursor', 'skills', 'hirify', 'SKILL.md'), 'utf8'), SKILL)
+  const lines = describeSkill(result)
+  assert.equal(lines[0], 'The skill is installed for Claude Code, Cursor.')
+  assert.equal(lines[1], 'For Cursor the skill is a copy, not a link: after the CLI updates, run hirify skill to refresh it.')
 })
 
 test('agent directories follow the variables the agents themselves read', () => {

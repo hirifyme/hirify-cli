@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, cpSync, rmSync, symlinkSync, realpathSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import semver from 'semver'
 import { CliError } from './errors.js'
 import { PACKAGE_NAME, runProcess } from './update.js'
@@ -31,12 +31,19 @@ const remove = path => rmSync(path, { recursive: true, force: true })
 // OS messages may carry private paths, so only the code is reported.
 const reason = error => ['EACCES', 'EPERM', 'EROFS', 'ENOSPC', 'EDQUOT', 'ENOTDIR', 'ENOENT', 'EEXIST', 'ELOOP'].includes(error?.code) ? error.code : 'unknown'
 
+// A junction needs no elevated rights on Windows; elsewhere the link stays relative.
+const linkSkill = (path, target, platform) => (platform === 'win32'
+  ? symlinkSync(realpathSync(path), target, 'junction')
+  : symlinkSync(relative(dirname(target), realpathSync(path)), target, 'dir'))
+
 /**
  * Install the skill carried by this package: one shared copy under `~/.agents/skills`, linked into
  * every agent found here. The skill comes from the package of the CLI it is for, so the two match.
- * An agent that cannot be written to is reported and does not stop the others.
+ * An agent that cannot be written to is reported and does not stop the others. An agent that
+ * cannot take a link gets a copy, and the result says so: a copy does not follow the shared one
+ * when the CLI updates, so the person knows to run `hirify skill` again.
  */
-export function installSkill({ packageRoot, env = process.env, home = homedir(), platform = process.platform } = {}) {
+export function installSkill({ packageRoot, env = process.env, home = homedir(), platform = process.platform, link = linkSkill } = {}) {
   const source = join(packageRoot, 'skills', SKILL_NAME)
   if (!existsSync(join(source, 'SKILL.md'))) throw new CliError('skill_missing', 'This installation does not carry the skill. Install it with: npx skills add hirifyme/hirify-cli')
   const shared = join(home, '.agents', 'skills')
@@ -56,12 +63,9 @@ export function installSkill({ packageRoot, env = process.env, home = homedir(),
       if (parent === realpathSync(shared)) { agents.push({ agent: agent.name, installed: true }); continue }
       const target = join(parent, SKILL_NAME)
       remove(target)
-      try {
-        // A junction needs no elevated rights on Windows; elsewhere the link stays relative.
-        if (platform === 'win32') symlinkSync(realpathSync(path), target, 'junction')
-        else symlinkSync(relative(parent, realpathSync(path)), target, 'dir')
-      } catch { cpSync(source, target, { recursive: true }) }
-      agents.push({ agent: agent.name, installed: true })
+      let copied = false
+      try { link(path, target, platform) } catch { cpSync(source, target, { recursive: true }); copied = true }
+      agents.push(copied ? { agent: agent.name, installed: true, copied: true } : { agent: agent.name, installed: true })
     } catch (error) { agents.push({ agent: agent.name, installed: false, reason: reason(error) }) }
   }
   return { skill: SKILL_NAME, path, agents }
@@ -104,5 +108,7 @@ export function describeSkill(result) {
   const failed = result.agents.filter(item => !item.installed).map(item => `${item.agent} (${item.reason})`)
   const lines = [done.length ? `The skill is installed for ${done.join(', ')}.` : `The skill is saved in ${result.path}. No supported agent was found on this computer.`]
   if (failed.length) lines.push(`It could not be installed for ${failed.join(', ')}. Check that the agent's skills directory is a folder you can write to, then run hirify skill.`)
+  const copies = result.agents.filter(item => item.copied).map(item => item.agent)
+  if (copies.length) lines.push(`For ${copies.join(', ')} the skill is a copy, not a link: after the CLI updates, run hirify skill to refresh it.`)
   return lines
 }

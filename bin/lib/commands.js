@@ -205,6 +205,14 @@ function detailRows(pairs) {
 }
 
 /**
+ * The word that names a vacancy, offered under both names a manifest may use for the path
+ * slot. Hirify moved vacancies.read and vacancies.reveal from `{slug}` to `{vacancy_id}` on
+ * 2026-09-30 and reads a non-numeric value in that slot as the slug, so one set of params
+ * serves the old manifest, the new one, a slug and a numeric id alike.
+ */
+const vacancyRef = (word) => ({ slug: word, vacancy_id: word })
+
+/**
  * One vacancy in full, with the text a person reads on the site. This is the command an
  * agent shortlists with, so it is deliberately the cheap one: it counts against the day's
  * vacancy opens, which is a generous allowance, and not against the reveal budget.
@@ -218,7 +226,7 @@ async function cmdVacancyRead(args, words) {
       '\n        Slugs come from hirify vacancy search or hirify feed show.')
   }
 
-  const res = await callCapability('vacancies.read', { params: { slug }, allow: [200, 404] })
+  const res = await callCapability('vacancies.read', { params: vacancyRef(slug), allow: [200, 404] })
   if (res.status === 404) die('there is no vacancy with that slug.')
 
   const d = res.body?.data ?? {}
@@ -276,7 +284,7 @@ function contactLine(c) {
 async function cmdVacancyReveal(args, words) {
   const [slug] = words
   if (!slug) die('a vacancy slug is required: hirify vacancy reveal <slug>')
-  const body = await callCapability('vacancies.reveal', { params: { slug } })
+  const body = await callCapability('vacancies.reveal', { params: vacancyRef(slug) })
   const d = body?.data ?? {}
   out(body, () => {
     console.log(`company:  ${d.company ?? '-'}`)
