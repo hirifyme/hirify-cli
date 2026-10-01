@@ -6,7 +6,7 @@ description: Job search through Hirify - vacancies from the user's saved feeds, 
 # Hirify job search
 
 Use the Hirify job board through the `hirify` CLI. This file gives the working order; `reference.md`
-has every command in full, and `hirify intro` is the server's guide.
+has every command in full; `hirify intro` prints the playbook: https://hirify.me/agent-playbook.txt.
 
 ## Setup and automation
 
