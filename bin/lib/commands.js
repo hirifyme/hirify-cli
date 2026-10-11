@@ -110,6 +110,8 @@ function printVacancies(list, meta) {
     ? true
     : perPage !== null && list.length >= perPage
   if (more && page !== null) console.log(`More: add --page ${page + 1}`)
+  // Paging is fine; a list this long usually means the criteria do not yet describe the user.
+  if (lastPage !== null && lastPage > 3) console.log(`${total ?? 'Many'} vacancies over ${lastPage} pages: narrower criteria usually give a list worth reading in full.`)
 }
 
 /** The vacancies in one saved feed, using the criteria the feed already holds. */
@@ -619,94 +621,24 @@ async function cmdWebhookCreate(args, words) {
 
 const INTRO = `hirify - job search for AI agents
 
-Hirify is a job board. This CLI is how an agent works it for someone: the same vacancies, the
-same saved filters and the same account they have at hirify.me.
+This is the built-in text: Hirify did not return the playbook. The working method (interviewing your
+user, setting up the search, going through the results, judging a vacancy, applying) is the Hirify
+playbook, kept current on the server: https://hirify.me/agent-playbook.txt. Run hirify intro again
+when Hirify is reachable.
 
 Setting up
   npx -y hirify-cli@latest init installs this CLI and the agent's skill, then opens sign-in.
 
 Signing in
-  hirify login prints a link and tries the browser when available. A person confirms access.
+  hirify login prints a link and tries the browser when available. Your user confirms access.
   Manual sign-in: hirify login --no-browser. For automation, use HIRIFY_KEY or hirify auth --stdin; get a key at
   hirify.me/account/api-access.
 
-Start with what the account already has
-  Most people who use Hirify have saved a filter or two on the site. Those are feeds, and they
-  are the best place to start, because someone has already said in them what they want.
-
-    hirify account show          the plan and allowances
-    hirify feed list             what this account has saved
-    hirify feed show 31          the vacancies in one of them
-
-  When no feed fits, search the whole board. Search takes a phrase, and any criterion the
-  site's own filter form can express, written as an option:
-
-    hirify vacancy search "senior go"
-    hirify vacancy search "senior go" --page 2
-    hirify vacancy search "senior go" --<criterion> <value>
-
-  The criteria are the server's, not this CLI's, and nothing here names one on purpose: a
-  name written into this text would be a copy, and copies go stale quietly. Ask instead:
-
-    hirify filter guide
-
-  It prints what search can filter on and what the values are, written by the server from
-  the same source the site searches with. An option is sent on under the name you gave it;
-  give one twice and the values are joined, the way the site sends a filter with several
-  values.
-
-Read before you spend anything
-  A card is a headline: title, company, terms. Fit is decided in the text.
-
-    hirify vacancy read senior-go-engineer
-
-  This prints the whole vacancy, and it also says which of the two ways to apply this one
-  takes, so you do not have to work that out or find out from a refusal.
-
-What costs what
-  Lists and searches are free.
-  Reading one vacancy in full spends one of the Agent API's daily vacancy opens. There are
-  many of them, and reading a vacancy again the same day costs nothing. Read as much as you
-  need to.
-  Revealing where to apply spends 1 reveal, and reveals are the scarce one. Protect that
-  number: shortlist by reading, then reveal only the ones worth applying to.
-  Applying has a daily allowance of its own. It is not the free step it looks like.
-  hirify account show has all three, and it is the only place they are current.
-
-Where to apply
-    hirify vacancy reveal senior-go-engineer
-
-  Gives the company, its LinkedIn page when we know it, and the address to send the
-  application to. Revealing the same vacancy again returns the same thing and costs nothing.
-
-Applying
-  Most vacancies here came from somewhere else: company pages, Telegram channels, other
-  boards. For those, reveal brings back the address, and the application is made there rather
-  than through Hirify.
-  Vacancies hosted on Hirify can be applied to from here:
-
-    hirify profile list
-    hirify vacancy apply senior-go-engineer --profile 4 --cover "..."
-
-  An application reaches a real person and cannot be recalled. Ask first, every time, and
-  show what you are about to send. Nothing follows up afterwards: the recruiter replies
-  where they choose to.
-
-Two more things
-  A saved search can be created from here and delivered to Telegram or to a server of yours:
-  hirify feed create, hirify feed deliver, hirify webhook list.
-  Something broken or missing: hirify feedback send bug "<title>" --body "<what happened>". It
-  reaches the team and costs nothing.
-
-If a command you need is not here
-  hirify api call <capability> invokes any capability Hirify lists in its manifest and prints
-  the answer as it comes back, so a capability without its own command is a detour and not a
-  dead end. Inputs go in --data as a JSON object. Prefer the commands above where one fits:
-  they say what a thing costs and what a refusal means, and this one cannot.
-
-If you are an agent
-  Install the working rules once: hirify skill. They cover the order
-  above, what needs the person's permission before you do it, and what each refusal means.
+Commands
+  hirify account show, hirify feed list, hirify vacancy search, hirify vacancy read,
+  hirify vacancy reveal, hirify vacancy apply, hirify filter guide. Anything else:
+  hirify api call <capability>. An application reaches a real person and cannot be recalled:
+  ask your user first.
 
 Use --json for structured results and --error-format=json for structured errors.
 The full list of commands: hirify --help`
