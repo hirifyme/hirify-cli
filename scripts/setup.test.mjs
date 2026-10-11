@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os'
 import { join, dirname, delimiter } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
-import { installSkill, installGlobally, agentDirectories, describeSkill } from '../bin/lib/setup.js'
+import { installSkill, installGlobally, agentDirectories, describeSkill, refreshSkill } from '../bin/lib/setup.js'
 import { CliError } from '../bin/lib/errors.js'
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -205,4 +205,57 @@ test('hirify init says which step failed and still does the others', async () =>
   assert.deepEqual(result.cli, { installed: false, reason: 'install_failed' })
   assert.deepEqual(result.skill.agents, [{ agent: 'Claude Code', installed: true }])
   assert.equal(result.sign_in.signed_in, true)
+})
+
+// ── skill refresh ─────────────────────────────────────────────────────────
+// A newer CLI refreshes the skill an older one installed, so an auto-update brings the working
+// rules along. It never installs where there was none and never rolls a newer skill back.
+const sharedSkill = dir => join(dir, '.agents', 'skills', 'hirify')
+function oldSkill(dir, version) {
+  mkdirSync(sharedSkill(dir), { recursive: true })
+  writeFileSync(join(sharedSkill(dir), 'SKILL.md'), 'an old skill')
+  if (version) writeFileSync(join(sharedSkill(dir), '.hirify-cli-version'), version + '\n')
+}
+
+test('a newer CLI refreshes the skill an older release installed', () => {
+  const dir = home(); oldSkill(dir, '0.0.1')
+  assert.equal(refreshSkill({ packageRoot: ROOT, env: {}, home: dir }), true)
+  assert.equal(readFileSync(join(sharedSkill(dir), 'SKILL.md'), 'utf8'), SKILL)
+  assert.equal(readFileSync(join(sharedSkill(dir), '.hirify-cli-version'), 'utf8').trim(), VERSION)
+})
+
+test('a skill installed before version marks is refreshed', () => {
+  const dir = home(); oldSkill(dir)
+  assert.equal(refreshSkill({ packageRoot: ROOT, env: {}, home: dir }), true)
+  assert.equal(readFileSync(join(sharedSkill(dir), 'SKILL.md'), 'utf8'), SKILL)
+})
+
+test('refresh installs nothing where no skill was installed', () => {
+  const dir = home('.claude')
+  assert.equal(refreshSkill({ packageRoot: ROOT, env: {}, home: dir }), false)
+  assert.ok(!existsSync(sharedSkill(dir)))
+  assert.ok(!existsSync(join(dir, '.claude', 'skills', 'hirify')))
+})
+
+test('an older CLI does not roll a newer skill back', () => {
+  const dir = home(); oldSkill(dir, '999.0.0')
+  assert.equal(refreshSkill({ packageRoot: ROOT, env: {}, home: dir }), false)
+  assert.equal(readFileSync(join(sharedSkill(dir), 'SKILL.md'), 'utf8'), 'an old skill')
+})
+
+test('an agent that holds a copy gets the copy refreshed, a linked agent follows the shared one', () => {
+  const dir = home('.claude', '.cursor'); oldSkill(dir, '0.0.1')
+  mkdirSync(join(dir, '.claude', 'skills', 'hirify'), { recursive: true })
+  writeFileSync(join(dir, '.claude', 'skills', 'hirify', 'SKILL.md'), 'an old copy')
+  mkdirSync(join(dir, '.cursor', 'skills'), { recursive: true })
+  link(sharedSkill(dir), join(dir, '.cursor', 'skills', 'hirify'))
+  refreshSkill({ packageRoot: ROOT, env: {}, home: dir })
+  assert.equal(readFileSync(join(dir, '.claude', 'skills', 'hirify', 'SKILL.md'), 'utf8'), SKILL)
+  assert.equal(readFileSync(join(dir, '.cursor', 'skills', 'hirify', 'SKILL.md'), 'utf8'), SKILL)
+})
+
+test('installing the skill records the CLI release it came from', () => {
+  const dir = home('.claude')
+  installSkill({ packageRoot: ROOT, env: {}, home: dir })
+  assert.equal(readFileSync(join(sharedSkill(dir), '.hirify-cli-version'), 'utf8').trim(), VERSION)
 })

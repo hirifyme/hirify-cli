@@ -56,6 +56,7 @@ export async function main(argv = process.argv.slice(2), { baseRoot = ownRoot, b
     const api = createApi({ config, http, auth, output })
     const updater = createUpdater({ config, http, signal, output, event, packageRoot: ownRoot, baseRoot, baseVersion })
     const local = ['auth', 'auth status', 'logout', 'doctor', 'init', 'skill', 'update'].includes(command.name)
+    if (!['init', 'skill'].includes(command.name)) { const { refreshSkill } = await import('./setup.js'); refreshSkill({ packageRoot: ownRoot, env: config.env }) }
     if (!skipUpdate && !local) next = await updater.automatic()
     if (next) {
       // Dispose every timer and signal handler before handing off, at most once per invocation.

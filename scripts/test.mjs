@@ -868,7 +868,7 @@ test('intro falls back to the built-in guide when the well-known publishes none'
   for (const topic of topics) {
     assert.match(stdout, topic)
   }
-  assert.match(stdout, /Reading one vacancy in full spends one of the Agent API's daily vacancy opens/)
+  assert.match(stdout, /hirify\.me\/agent-playbook\.txt/, 'the fallback points to the playbook instead of carrying a copy of it')
   assert.ok(!/browser spends|shared with (the )?(site|website|browser)/i.test(stdout),
     'the Agent API allowance is not described as a website or browser allowance')
   assert.match(stdout, /cannot be recalled/)
@@ -896,7 +896,7 @@ test('intro still works when Hirify cannot be reached', async () => {
 
   assert.equal(code, 0)
   assert.match(stdout, /hirify login/)
-  assert.match(stdout, /Reading one vacancy in full spends one of the Agent API's daily vacancy opens/)
+  assert.match(stdout, /hirify\.me\/agent-playbook\.txt/, 'the fallback points to the playbook instead of carrying a copy of it')
 })
 
 test('intro is reachable from the help', async () => {
@@ -1159,19 +1159,17 @@ test('filter guide --json hands over the server payload', async () => {
   assert.deepEqual(JSON.parse(stdout), body)
 })
 
-test('the installed skill requires guide, preview, refinement, then final search', () => {
+test('the installed skill sends the agent to hirify intro and carries no copy of the method', () => {
+  // The working method is the playbook the server publishes (hirify intro). The skill is a copy on
+  // the person's computer, so a method written into it would go stale and compete with the playbook.
   const root = join(dirname(fileURLToPath(import.meta.url)), '..')
   const skill = readFileSync(join(root, 'skills/hirify/SKILL.md'), 'utf8')
 
-  const guide = skill.indexOf('Read `hirify filter guide`')
-  const preview = skill.indexOf('hirify api call filters.preview', guide)
-  const refine = skill.indexOf('refine and preview again', preview)
-  const search = skill.indexOf('Run `hirify vacancy search`', refine)
-
-  assert.ok(guide !== -1, 'the search workflow starts from the server guide')
-  assert.ok(preview > guide, 'preview follows the guide')
-  assert.ok(refine > preview, 'the skill checks and refines the preview')
-  assert.ok(search > refine, 'the final search follows a validated preview')
+  const start = skill.indexOf('## Start here')
+  assert.ok(start !== -1 && skill.indexOf('hirify intro', start) > start, 'the skill starts with hirify intro')
+  assert.match(skill, /hirify\.me\/agent-playbook\.txt/)
+  assert.ok(!/## Working order|## Searching|## Applying/.test(skill), 'the method lives in the playbook, not in the skill')
+  assert.match(skill, /cannot be taken back/, 'the one standing safety rule stays')
 })
 
 test('a server without the guide is told apart from a mistake in the command', async () => {

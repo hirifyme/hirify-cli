@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, cpSync, rmSync, symlinkSync, realpathSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, cpSync, rmSync, symlinkSync, realpathSync, readFileSync, writeFileSync, lstatSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import semver from 'semver'
@@ -52,6 +52,7 @@ export function installSkill({ packageRoot, env = process.env, home = homedir(),
     mkdirSync(shared, { recursive: true })
     remove(path)
     cpSync(source, path, { recursive: true })
+    markVersion(path, packageRoot)
   } catch (error) { throw new CliError('skill_install_failed', `Could not save the skill (${reason(error)}). This command needs write access to the home directory.`) }
   const agents = []
   for (const agent of agentDirectories({ env, home })) {
@@ -69,6 +70,39 @@ export function installSkill({ packageRoot, env = process.env, home = homedir(),
     } catch (error) { agents.push({ agent: agent.name, installed: false, reason: reason(error) }) }
   }
   return { skill: SKILL_NAME, path, agents }
+}
+
+// Which CLI release the installed skill came from, so a newer CLI knows to refresh it.
+const VERSION_MARK = '.hirify-cli-version'
+const packageVersion = root => { try { return JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version } catch { return null } }
+function markVersion(path, packageRoot) { const version = packageVersion(packageRoot); if (version) writeFileSync(join(path, VERSION_MARK), version + '\n') }
+
+/**
+ * Refresh a skill this CLI installed earlier, when the running CLI is newer than the release it
+ * came from: an auto-updated CLI brings its skill along, so the working rules on the computer
+ * never lag behind the CLI. Only an existing installation is touched - nothing is installed where
+ * there was none - and an older CLI never rolls a newer skill back. Agents that got a copy rather
+ * than a link get their copy refreshed too. Best effort: any failure leaves things as they were.
+ */
+export function refreshSkill({ packageRoot, env = process.env, home = homedir() } = {}) {
+  try {
+    const source = join(packageRoot, 'skills', SKILL_NAME)
+    const path = join(home, '.agents', 'skills', SKILL_NAME)
+    const own = packageVersion(packageRoot)
+    if (!own || !existsSync(join(path, 'SKILL.md')) || !existsSync(join(source, 'SKILL.md'))) return false
+    let installed = null
+    try { installed = readFileSync(join(path, VERSION_MARK), 'utf8').trim() } catch {}
+    if (semver.valid(installed) && !semver.gt(own, installed)) return false
+    remove(path); cpSync(source, path, { recursive: true }); markVersion(path, packageRoot)
+    for (const agent of agentDirectories({ env, home })) {
+      const target = join(agent.skills, SKILL_NAME)
+      try {
+        if (!existsSync(join(target, 'SKILL.md')) || lstatSync(target).isSymbolicLink() || realpathSync(target) === realpathSync(path)) continue
+        remove(target); cpSync(source, target, { recursive: true })
+      } catch {}
+    }
+    return true
+  } catch { return false }
 }
 
 /**
