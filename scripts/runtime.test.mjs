@@ -140,9 +140,9 @@ test('redirect from token endpoint cannot forward the refresh body',async()=>{
   const foreign=await server((_,res)=>json(res,{}));const s=await apiFixture((req,res)=>{if(req.url==='/token'){res.writeHead(307,{Location:foreign.url+'/token'});return res.end()}json(res,{data:{}})});const cfg=temp();authFile(cfg,oauth(s.url))
   try{const r=await run(['account','show'],{api:s.url,cfg});assert.equal(r.code,1);assert.equal(foreign.requests.length,0)}finally{await s.close();await foreign.close()}
 })
-async function loginFixture({observe,accountFailure=false}={}){
+async function loginFixture({observe,accountFailure=false,scopesSupported=['agent:read','offline_access','unrelated:admin']}={}){
   const cfg=temp();let pkce=false,callback,nonce,verifierChallenge;const s=await server((req,res,body)=>{
-    if(req.url==='/.well-known/oauth-authorization-server')return json(res,{issuer:s.url,authorization_endpoint:s.url+'/authorize',registration_endpoint:s.url+'/register',token_endpoint:s.url+'/token',scopes_supported:['agent:read','offline_access','unrelated:admin'],code_challenge_methods_supported:['S256']})
+    if(req.url==='/.well-known/oauth-authorization-server')return json(res,{issuer:s.url,authorization_endpoint:s.url+'/authorize',registration_endpoint:s.url+'/register',token_endpoint:s.url+'/token',scopes_supported:scopesSupported,code_challenge_methods_supported:['S256']})
     if(req.url==='/register'){callback=JSON.parse(body).redirect_uris[0];return json(res,{client_id:'synthetic-client'})}
     if(req.url==='/token'){const form=new URLSearchParams(body);pkce=createHash('sha256').update(form.get('code_verifier')).digest('base64url')===verifierChallenge;return json(res,{access_token:'synthetic-login-access',refresh_token:'synthetic-login-refresh',token_type:'Bearer',expires_in:3600})}
     return json(res,{error:'unavailable'},accountFailure?503:404)
@@ -156,6 +156,11 @@ async function loginFixture({observe,accountFailure=false}={}){
 test('PKCE browser login succeeds and requests only client scopes, without optional account dependency',async()=>{
   const f=await loginFixture({accountFailure:true,observe:async({callback,state,url})=>{assert.equal(url.searchParams.get('scope'),'agent:read offline_access');await fetch(callback+'?code=synthetic-code&state='+state)}})
   try{const r=await f.task.done;assert.equal(r.code,0,r.stderr);assert.equal(JSON.parse(r.stdout).signed_in,true);assert.ok(f.pkce());assert.equal(state(f.cfg).access_token,'synthetic-login-access');assert.equal(f.s.requests.length,3)}finally{await f.s.close()}
+})
+test('the printed login link preserves the full reveal permission without inserted whitespace',async()=>{
+ const scopes=['agent:read','agent:reveal','agent:apply','agent:manage','agent:feedback','offline_access']
+ const f=await loginFixture({scopesSupported:scopes,observe:async({callback,state,url})=>{assert.equal(url.searchParams.get('scope'),scopes.join(' '));await fetch(callback+'?code=synthetic-code&state='+state)}})
+ try{const r=await f.task.done;assert.equal(r.code,0,r.stderr);assert.equal(JSON.parse(r.stdout).signed_in,true);assert.ok(f.pkce())}finally{await f.s.close()}
 })
 test('invalid callback, error without state and malformed target do not settle login; active socket is cleaned',async()=>{
   let socket
@@ -258,6 +263,29 @@ test('IPv4 bind failure falls back to real IPv6 loopback',async t=>{
 test('correlated access denial ends login without token exchange or saved credentials',async()=>{
  const f=await loginFixture({observe:({callback,state})=>fetch(callback+'?error=access_denied&state='+state)})
  try{const r=await f.task.done;assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr.trim().split('\n').at(-1)).error.code,'auth_denied');assert.ok(!existsSync(join(f.cfg,'hirify/auth.json')));assert.ok(!f.s.requests.some(q=>q.url==='/token'))}finally{await f.s.close()}
+})
+test('malformed OAuth permissions show the server reason without saving sign-in',async()=>{
+ const message='The requested permissions are invalid. Please start sign-in again from the original link.'
+ const f=await loginFixture({observe:({callback,state})=>fetch(callback+'?'+new URLSearchParams({error:'invalid_scope',error_description:message,state}))})
+ try{const r=await f.task.done;assert.equal(r.code,1);const error=JSON.parse(r.stderr.trim().split('\n').at(-1)).error;assert.equal(error.code,'invalid_scope');assert.equal(error.message,message);assert.ok(!existsSync(join(f.cfg,'hirify/auth.json')));assert.ok(!f.s.requests.some(q=>q.url==='/token'))}finally{await f.s.close()}
+})
+for(const [code,message] of [['missing_ability','This capability requires the "agent:reveal" ability.'],['quota_exhausted','No free attempts remaining. Premium subscription required.']])test(`403 preserves the server reason in text and JSON: ${code}`,async()=>{
+ const s=await apiFixture((_,res)=>{res.setHeader('x-request-id','req-1345');json(res,{ok:false,error:{code,message,retryable:false,details:{ability:'agent:reveal'}}},403)},{document:manifest([['vacancies.reveal','POST','/reveal/{slug}']])})
+ try{
+  const text=await run(['vacancy','reveal','demo'],{api:s.url,key:'synthetic'});assert.equal(text.code,1);assert.equal(text.stdout,'');assert.equal(text.stderr.trim(),`hirify: ${message}`)
+  const structured=await run(['vacancy','reveal','demo','--error-format=json'],{api:s.url,key:'synthetic'});assert.equal(structured.code,1);const error=JSON.parse(structured.stderr).error;assert.equal(error.code,code);assert.equal(error.message,message);assert.equal(error.status,403);assert.equal(error.request_id,'req-1345');assert.equal(error.retryable,false);assert.equal(s.requests.filter(q=>q.method==='POST').length,2)
+ }finally{await s.close()}
+})
+test('403 on manifest loading shows the server entitlement reason',async()=>{
+ const message='Hirify Plus is required.';let s
+ s=await server((req,res)=>req.url==='/.well-known/hirify-agent'?json(res,{manifest_url:s.url+'/meta'}):json(res,{ok:false,error:{code:'access_restricted',message,details:{reason:'premium_required'}}},403))
+ try{const r=await run(['account','show','--error-format=json'],{api:s.url,key:'synthetic'});assert.equal(r.code,1);const error=JSON.parse(r.stderr).error;assert.equal(error.code,'access_restricted');assert.equal(error.message,message);assert.equal(s.requests.length,2)}finally{await s.close()}
+})
+test('legacy 403 keeps its message and an empty 403 does not invent a cause',async()=>{
+ for(const [body,message] of [[{message:'Account is suspended.'},'Account is suspended.'],[{},'Access was denied (403).']]){
+  const s=await apiFixture((_,res)=>json(res,body,403),{document:manifest([['vacancies.reveal','POST','/reveal/{slug}']])})
+  try{const r=await run(['vacancy','reveal','demo','--error-format=json'],{api:s.url,key:'synthetic'});assert.equal(r.code,1);const error=JSON.parse(r.stderr).error;assert.equal(error.code,'access_denied');assert.equal(error.message,message)}finally{await s.close()}
+ }
 })
 test('registration cannot outlive the command deadline',async()=>{
  let s;s=await server((req,res)=>{if(req.url==='/.well-known/oauth-authorization-server')json(res,{issuer:s.url,authorization_endpoint:s.url+'/authorize',registration_endpoint:s.url+'/register',token_endpoint:s.url+'/token'})})

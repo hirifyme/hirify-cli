@@ -27,7 +27,7 @@ export async function startCallbackServer({ state, issuer, port = 0, signal, tim
     if (settled || !validState || params.getAll('state').length !== 1 || params.getAll('code').length > 1 || params.getAll('error').length > 1 || Boolean(code) === Boolean(error) || (params.has('iss') && (params.getAll('iss').length !== 1 || params.get('iss') !== issuer))) return reply(400, 'This callback does not match the pending sign-in.')
     settled = true
     reply(200, '<!doctype html><html lang="en"><meta charset="utf-8"><title>Hirify</title><h1>Confirmation received</h1><p>Return to your terminal to see the sign-in result.</p></html>', true)
-    settle({ code, error })
+    settle({ code, error, error_description: params.get('error_description') })
   })
   server.requestTimeout = 5000
   server.headersTimeout = 5000
