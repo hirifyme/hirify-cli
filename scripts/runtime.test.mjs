@@ -259,6 +259,29 @@ test('correlated access denial ends login without token exchange or saved creden
  const f=await loginFixture({observe:({callback,state})=>fetch(callback+'?error=access_denied&state='+state)})
  try{const r=await f.task.done;assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr.trim().split('\n').at(-1)).error.code,'auth_denied');assert.ok(!existsSync(join(f.cfg,'hirify/auth.json')));assert.ok(!f.s.requests.some(q=>q.url==='/token'))}finally{await f.s.close()}
 })
+test('malformed OAuth permissions show the server reason without saving sign-in',async()=>{
+ const message='The requested permissions are invalid. Please start sign-in again from the original link.'
+ const f=await loginFixture({observe:({callback,state})=>fetch(callback+'?'+new URLSearchParams({error:'invalid_scope',error_description:message,state}))})
+ try{const r=await f.task.done;assert.equal(r.code,1);const error=JSON.parse(r.stderr.trim().split('\n').at(-1)).error;assert.equal(error.code,'invalid_scope');assert.equal(error.message,message);assert.ok(!existsSync(join(f.cfg,'hirify/auth.json')));assert.ok(!f.s.requests.some(q=>q.url==='/token'))}finally{await f.s.close()}
+})
+for(const [code,message] of [['missing_ability','This capability requires the "agent:reveal" ability.'],['quota_exhausted','No free attempts remaining. Premium subscription required.']])test(`403 preserves the server reason in text and JSON: ${code}`,async()=>{
+ const s=await apiFixture((_,res)=>{res.setHeader('x-request-id','synthetic-request');json(res,{ok:false,error:{code,message,retryable:false,details:{ability:'agent:reveal'}}},403)},{document:manifest([['vacancies.reveal','POST','/reveal/{slug}']])})
+ try{
+  const text=await run(['vacancy','reveal','demo'],{api:s.url,key:'synthetic'});assert.equal(text.code,1);assert.equal(text.stdout,'');assert.equal(text.stderr.trim(),`hirify: ${message}`)
+  const structured=await run(['vacancy','reveal','demo','--error-format=json'],{api:s.url,key:'synthetic'});assert.equal(structured.code,1);const error=JSON.parse(structured.stderr).error;assert.equal(error.code,code);assert.equal(error.message,message);assert.equal(error.status,403);assert.equal(error.request_id,'synthetic-request');assert.equal(error.retryable,false);assert.equal(s.requests.filter(q=>q.method==='POST').length,2)
+ }finally{await s.close()}
+})
+test('403 on manifest loading shows the server entitlement reason',async()=>{
+ const message='Hirify Plus is required.';let s
+ s=await server((req,res)=>req.url==='/.well-known/hirify-agent'?json(res,{manifest_url:s.url+'/meta'}):json(res,{ok:false,error:{code:'access_restricted',message,details:{reason:'premium_required'}}},403))
+ try{const r=await run(['account','show','--error-format=json'],{api:s.url,key:'synthetic'});assert.equal(r.code,1);const error=JSON.parse(r.stderr).error;assert.equal(error.code,'access_restricted');assert.equal(error.message,message);assert.equal(s.requests.length,2)}finally{await s.close()}
+})
+test('legacy 403 keeps its message and an empty 403 does not invent a cause',async()=>{
+ for(const [body,message] of [[{message:'Account is suspended.'},'Account is suspended.'],[{},'Access was denied (403).']]){
+  const s=await apiFixture((_,res)=>json(res,body,403),{document:manifest([['vacancies.reveal','POST','/reveal/{slug}']])})
+  try{const r=await run(['vacancy','reveal','demo','--error-format=json'],{api:s.url,key:'synthetic'});assert.equal(r.code,1);const error=JSON.parse(r.stderr).error;assert.equal(error.code,'access_denied');assert.equal(error.message,message)}finally{await s.close()}
+ }
+})
 test('registration cannot outlive the command deadline',async()=>{
  let s;s=await server((req,res)=>{if(req.url==='/.well-known/oauth-authorization-server')json(res,{issuer:s.url,authorization_endpoint:s.url+'/authorize',registration_endpoint:s.url+'/register',token_endpoint:s.url+'/token'})})
  try{const start=Date.now();const r=await run(['login','--no-browser','--timeout=1','--error-format=json'],{api:s.url});assert.equal(r.code,1);assert.equal(JSON.parse(r.stderr).error.code,'command_timeout');assert.ok(Date.now()-start<3000);assert.equal(r.killed,false);assert.ok(s.requests.some(q=>q.url==='/register'))}finally{await s.close()}

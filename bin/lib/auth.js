@@ -94,7 +94,7 @@ export function createAuth({ config, store, http, signal, output, event, secrets
       reminder = setInterval(() => output.progress('Still waiting for browser confirmation. Use the sign-in link above, or press Ctrl+C.'), 30000)
       if (!noBrowser && info.canOpen) launchTask = openBrowser(url.href, { signal }).then(result => { event('browser', result); if (['launcher_missing', 'spawn_error', 'nonzero_exit'].includes(result.code)) output.progress('The browser launcher did not complete. Open the link above manually.') })
       const answer = await listener.received
-      if (answer.error) throw new CliError(answer.error === 'access_denied' ? 'auth_denied' : 'oauth_error', 'Sign-in was not approved. Nothing was saved. Run hirify login again when ready.')
+      if (answer.error) throw new CliError(answer.error === 'access_denied' ? 'auth_denied' : answer.error, answer.error_description || 'Sign-in was not approved. Nothing was saved. Run hirify login again when ready.')
       secrets.add(answer.code)
       const res = await form(endpoints.token_endpoint, { grant_type: 'authorization_code', client_id: client.client_id, code: answer.code, redirect_uri: listener.redirectUri, code_verifier: verifier })
       if (!res.ok) throw new CliError('oauth_exchange', 'The confirmation could not be exchanged. Run hirify login again.', { status: res.status })

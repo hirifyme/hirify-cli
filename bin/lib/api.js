@@ -31,7 +31,11 @@ export function responseError(response, { key = false } = {}) {
   if (status === 401) return new CliError('auth_required', key ? 'the key was not accepted (401). It may have been revoked, or copied incompletely.' : 'your sign-in is no longer valid. Please run hirify login --force.', options)
   if (status === 403 && body?.error?.code === 'access_restricted') return new CliError('access_restricted', accessRestrictedMessage(body), options)
   if (status === 409 && body?.error?.code === 'action_required') return new CliError('action_required', actionRequiredMessage(body), options)
-  if (status === 403) return new CliError('access_denied', 'no access (403). This needs an active paid plan, or the sign-in is missing a permission.', options)
+  if (status === 403) {
+    const code = typeof body?.error?.code === 'string' && body.error.code.trim() ? body.error.code : 'access_denied'
+    const message = typeof body?.error?.message === 'string' && body.error.message.trim() ? body.error.message : typeof body?.message === 'string' && body.message.trim() ? body.message : 'Access was denied (403).'
+    return new CliError(code, message, options)
+  }
   if (status === 404) return new CliError('not_found', 'not found (404).', options)
   if (status === 429) {
     const action = body?.quota?.action
@@ -76,7 +80,7 @@ export function createApi({ config, http, auth, output }) {
       const doc = await agentDiscovery()
       if (!doc.manifest_url) throw new CliError('manifest_unavailable', 'could not reach Hirify to load what it can do. Please check your connection and try again.')
       const res = await authenticated(doc.manifest_url, { safe: true })
-      if (!res.ok) { if (res.status === 401) throw responseError(res, { key: Boolean(config.envKey) }); throw new CliError('manifest_unavailable', 'could not load what Hirify can do right now. Please try again in a minute.', { status: res.status }) }
+      if (!res.ok) { if ([401, 403].includes(res.status)) throw responseError(res, { key: Boolean(config.envKey) }); throw new CliError('manifest_unavailable', 'could not load what Hirify can do right now. Please try again in a minute.', { status: res.status }) }
       return validateManifest(requireJSON(res), config.api)
     })()
     return manifest
