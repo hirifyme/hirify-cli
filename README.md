@@ -64,7 +64,7 @@ Open the printed link on the computer that owns the tunnel. Confirm access withi
 a reminder appears every 30 seconds. Ctrl+C cancels and closes the listener. Start a fresh login
 after cancellation. `hirify login --force` replaces an existing or unusable sign-in.
 
-For unattended work, obtain a key at [API access](https://hirify.me/account/api-access), supply it
+For unattended work, obtain a key at [MCP/API](https://hirify.me/account/mcp-api), supply it
 as `HIRIFY_KEY`, or pipe it to `hirify auth --stdin`. Avoid putting keys in shell history with
 `hirify auth <key>`; that legacy form is still accepted. Never put a real key in a support report.
 `HIRIFY_KEY` takes precedence over the saved sign-in. `hirify logout` removes local access only;

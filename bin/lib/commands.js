@@ -632,7 +632,7 @@ Setting up
 Signing in
   hirify login prints a link and tries the browser when available. Your user confirms access.
   Manual sign-in: hirify login --no-browser. For automation, use HIRIFY_KEY or hirify auth --stdin; get a key at
-  hirify.me/account/api-access.
+  hirify.me/account/mcp-api.
 
 Commands
   hirify account show, hirify feed list, hirify vacancy search, hirify vacancy read,
