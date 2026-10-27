@@ -84,6 +84,7 @@ hirify vacancy hide <slug>...
 hirify company hide "<name>"
 hirify hidden list
 hirify profile list
+hirify profile duplicate <id>
 hirify vacancy apply <slug> --profile <id> --cover-file cover.txt
 ```
 

@@ -110,6 +110,7 @@ const CAPS = [
   ['feeds.create', 'POST', '/api/agent/feeds'],
   ['feeds.set_delivery', 'PUT', '/api/agent/feeds/{feed_id}/delivery'],
   ['profiles.list', 'GET', '/api/agent/profiles'],
+  ['profiles.duplicate', 'POST', '/api/agent/profiles/{profile_id}/duplicate'],
   ['webhooks.list', 'GET', '/api/agent/webhooks'],
   ['webhooks.create', 'POST', '/api/agent/webhooks'],
   ['feedback.send', 'POST', '/api/agent/feedback'],
@@ -294,6 +295,31 @@ test('company hide by vacancy and undo', async () => {
   assert.deepEqual(seen, ['/api/agent/companies/hide'])
   assert.match(stdout, /^unhidden {2}Acme \(a-1\)$/m)
   assert.match(stdout, /^1 unhidden\.$/m)
+})
+
+test('profile duplicate copies one profile and names the copy', async () => {
+  const data = { profile_id: 4, name: 'Ada Lovelace', title: 'Backend', status: 'completed', is_complete: true }
+  const { code, stdout, seen } = await run(['profile', 'duplicate', '2'], answer(200, { data }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/profiles/2/duplicate'])
+  assert.match(stdout, /^Copied\. New profile 4: Ada Lovelace$/m)
+})
+
+test('profile duplicate passes the profile limit refusal on', async () => {
+  const body = { ok: false, error: { code: 'profile_limit', message: 'Profile limit reached (3). Delete a profile or upgrade the account to Plus.' } }
+  const { code, stderr } = await run(['profile', 'duplicate', '2'], answer(403, body))
+
+  assert.notEqual(code, 0)
+  assert.match(stderr, /Profile limit reached \(3\)/)
+})
+
+test('profile duplicate refuses a non-numeric id before calling the server', async () => {
+  const { code, stderr, seen } = await run(['profile', 'duplicate', 'abc'], answer(200, { data: {} }))
+
+  assert.notEqual(code, 0)
+  assert.deepEqual(seen, [])
+  assert.match(stderr, /profile id is required, a number/)
 })
 
 test('hidden list shows vacancies and companies and how to unhide', async () => {

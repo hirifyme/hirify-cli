@@ -466,6 +466,25 @@ async function cmdProfileList() {
 }
 
 /**
+ * A copy of one profile, the same as the site's Duplicate button: everything, contacts
+ * included. A copy rebuilt from text loses the contacts, so this is the way to a CV variant.
+ */
+async function cmdProfileDuplicate(_, words) {
+  const [id] = words
+  if (!/^\d+$/.test(id ?? '')) die('a profile id is required, a number: hirify profile duplicate <id>. See hirify profile list.')
+
+  const res = await callCapability('profiles.duplicate', { params: { profile_id: Number(id) }, allow: [200, 403, 404] })
+  if (res.status === 404) die('there is no profile with that id. See hirify profile list.')
+  if (res.status === 403) die(serverMessage(res.body) || 'the profile could not be copied.')
+
+  const p = res.body?.data ?? {}
+  out(res.body, () => {
+    console.log(`Copied. New profile ${p.profile_id ?? '-'}: ${p.name || p.title || '(untitled)'}`)
+    console.log('The copy has no public page yet. Change it on hirify.me/account/profile.')
+  })
+}
+
+/**
  * Send a real application, on Hirify, to a real person. This is the one command here
  * that cannot be undone, so it never guesses: if the account has several profiles and
  * none was named, the server refuses and we pass that on rather than picking one.
@@ -835,7 +854,7 @@ return {
   'vacancy search': cmdVacancySearch, 'vacancy read': cmdVacancyRead, 'vacancy reveal': cmdVacancyReveal, 'vacancy apply': cmdVacancyApply,
   'vacancy hide': cmdVacancyHide, 'company hide': cmdCompanyHide, 'hidden list': cmdHiddenList,
   'feed list': cmdFeedList, 'feed show': cmdFeedShow, 'feed create': cmdFeedCreate, 'feed deliver': cmdFeedDeliver,
-  'profile list': cmdProfileList, 'webhook list': cmdWebhookList, 'webhook create': cmdWebhookCreate,
+  'profile list': cmdProfileList, 'profile duplicate': cmdProfileDuplicate, 'webhook list': cmdWebhookList, 'webhook create': cmdWebhookCreate,
   'feedback send': cmdFeedbackSend, 'filter guide': cmdFilterGuide, 'api call': cmdApiCall,
   'capabilities list': async () => output.json(await api.loadManifest()),
   'capabilities show': async (_, words) => output.json(await api.resolveCapability(words[0])),
