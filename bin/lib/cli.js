@@ -26,6 +26,7 @@ export const COMMANDS = {
   'feed create': { args: [1, 1], flags: ['filters', 'telegram', 'no-telegram', 'webhook'], description: 'save a search and its delivery settings' },
   'feed deliver': { args: [1, 1], flags: ['telegram', 'no-telegram', 'webhook', 'no-webhook'], description: 'change delivery settings' },
   'profile list': { args: [0, 0], description: 'profiles you can apply with' },
+  'profile duplicate': { args: [1, 1], description: 'copy a profile in full, contacts included; counts toward the profile limit' },
   'webhook list': { args: [0, 0], description: 'your delivery endpoints' },
   'webhook create': { args: [2, 2], description: 'create an endpoint: <name> <url>' },
   'filter guide': { args: [0, 0], description: 'supported search filters, from the server' },
