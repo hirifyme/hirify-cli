@@ -42,6 +42,9 @@ Files preserve quotes and Unicode. Generic mutations are never automatically ret
 | `vacancy reveal` | 1 reveal, repeats on the same vacancy are free | reading only |
 | `vacancy apply` | counts against a daily allowance of its own | **no**: a real application reaches a real person |
 | `feed create`, `feed deliver`, `webhook create` | free | changes the user's account |
+| `tracker list`, `tracker show`, `tracker stages`, `tracker stats` | free | reading only |
+| `tracker add`, `tracker import`, `tracker update` | free | changes the user's tracker |
+| `tracker delete` | free | **no**: the entry cannot be restored |
 | `feedback send` | free | a ticket is filed |
 | `filter guide` | free: it spends nothing | reading only |
 | `api call` | whatever the capability it calls costs | whatever that capability does |
@@ -238,6 +241,34 @@ command only after the user approves delivery.
 
 `webhook create` answers with the endpoint and a **secret shown once**. Hand it to the user
 immediately and tell them to store it: it signs every delivery and cannot be shown again.
+
+## tracker: the person's applications
+
+The same list as "My applications" on hirify.me. Two kinds of rows share it, with separate ids:
+`tracker_id` is an entry the person keeps, usually an application made elsewhere. `application_id`
+is an application sent through Hirify: the recruiter sets its stage, and tracker commands do not
+change or delete it.
+
+```
+hirify tracker list [--source hirify|tracker] [--page <n>] [--limit <n>]
+hirify tracker show <tracker-id>
+hirify tracker show --application <id>
+hirify tracker add <slug> [--stage <name>] [--comment <text>]
+hirify tracker import --data-file rows.json
+hirify tracker update <tracker-id> [--title <text>] [--company <text>] [--url <link>] [--date YYYY-MM-DD] [--stage <name>] [--comment <text>] [--feedback <text>] [--source <text>] [--contact <text>] [--salary <number>] [--work-type <text>]
+hirify tracker delete <tracker-id>
+hirify tracker stages
+hirify tracker stats
+```
+
+`tracker add` takes a Hirify vacancy. For an application from another site use `tracker import`.
+`rows.json` is `{"applications":[{"job_title":"...","company":"...","job_url":"...","date_applied":"YYYY-MM-DD","stage":"..."}]}`,
+up to 200 rows per call. Sending the same rows again creates nothing. Read an xlsx or csv table
+yourself and write its rows to that file.
+
+`tracker update` changes only the fields you name; `--comment=` clears a note. `tracker stages`
+lists the stage names; a stage marked as set by the system cannot be set by hand. Delete an entry
+only when your user asked: it cannot be restored. `hirify tracker stats --help` lists the periods.
 
 ## feedback send
 

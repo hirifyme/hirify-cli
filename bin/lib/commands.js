@@ -485,6 +485,152 @@ async function cmdProfileDuplicate(_, words) {
 }
 
 /**
+ * The tracker: the same list as the site's "My applications". Two id spaces share it:
+ * tracker_id for entries the person keeps, application_id for applications sent through
+ * Hirify. They overlap, so a command always says which one it means.
+ */
+const trackerId = (id, usage) => {
+  if (!/^\d+$/.test(id ?? '')) die(`a tracker id is required, a number: ${usage}. See hirify tracker list.`)
+  return Number(id)
+}
+const refused = (res, notFound, fallback) => {
+  if (res.status === 404) die(notFound)
+  if (res.status >= 400) die(serverMessage(res.body) || fallback)
+}
+const TRACKER_NOT_FOUND = 'there is no tracker entry with that id. See hirify tracker list.'
+
+async function cmdTrackerList(args) {
+  const query = new URLSearchParams()
+  for (const [name, param] of [['--source', 'source'], ['--page', 'page'], ['--limit', 'per_page']]) {
+    const value = flag(args, name)
+    if (value) query.set(param, value)
+  }
+  const res = await callCapability('applications.list', { query, allow: [200, 422] })
+  refused(res, '', 'the list could not be read. --source takes hirify or tracker.')
+  const body = res.body
+  const list = body?.data ?? []
+  const m = body?.meta ?? {}
+  out(body, () => {
+    if (!list.length) return console.log('No applications yet.')
+    for (const a of list) {
+      const id = a.tracker_id ? `tracker ${a.tracker_id}` : `application ${a.application_id}`
+      console.log(`${id.padEnd(20)} ${String(a.stage ?? '-').padEnd(20)} ${dateOnly(a.date_applied) ?? '-'}  ${[a.title, a.company].filter(Boolean).join(' · ')}`)
+    }
+    if (m.last_page > 1) console.log(`page ${m.page} of ${m.last_page}: --page <n>`)
+    console.log('\nOne in full: hirify tracker show <tracker-id>  |  hirify tracker show --application <id>')
+  })
+}
+
+async function cmdTrackerShow(args, words) {
+  const application = flag(args, '--application')
+  if (Boolean(application) === Boolean(words[0])) die('name one application: hirify tracker show <tracker-id> or hirify tracker show --application <id>.')
+  const value = application ?? words[0]
+  if (!/^\d+$/.test(value)) die('the id must be a number. See hirify tracker list.')
+  const query = new URLSearchParams({ [application ? 'application_id' : 'tracker_id']: value })
+  const res = await callCapability('applications.read', { query, allow: [200, 404] })
+  refused(res, 'there is no application with that id. See hirify tracker list.', 'the application could not be read.')
+  const d = res.body?.data ?? {}
+  out(res.body, () => {
+    console.log([d.title, d.company].filter(Boolean).join(' · ') || '(untitled)')
+    const lines = [['stage', d.stage], ['applied', dateOnly(d.date_applied)], ['link', d.url], ['rejection', d.rejection_reason], ['note', d.comment], ['feedback', d.feedback], ['source', d.tracker_source], ['work type', d.work_type], ['salary', d.expected_salary]]
+    for (const [label, text] of lines) if (text) console.log(`${(label + ':').padEnd(11)}${text}`)
+    if (d.history?.length) {
+      console.log('\nHistory:')
+      for (const h of d.history) console.log(`  ${dateOnly(h.at) ?? '-'}  ${h.stage ?? h.status ?? '-'}`)
+    }
+  })
+}
+
+async function cmdTrackerAdd(args, words) {
+  const payload = { slug: words[0] }
+  const stage = flag(args, '--stage')
+  const comment = flag(args, '--comment')
+  if (stage !== null) payload.stage = stage
+  if (comment !== null) payload.comment = comment
+  const res = await callCapability('applications.track', { payload, allow: [200, 404, 409, 422] })
+  refused(res, 'there is no vacancy with that slug.', 'the application could not be logged.')
+  const { status, application: a = {} } = res.body?.data ?? {}
+  out(res.body, () => {
+    const word = status === 'created' ? 'Logged' : status === 'updated' ? 'Updated' : 'Already logged'
+    console.log(`${word}. Tracker entry ${a.tracker_id ?? '-'}, stage ${a.stage ?? '-'}.`)
+  })
+}
+
+async function cmdTrackerImport(args) {
+  const raw = options(args).get('data')
+  if (raw === undefined) die('rows are required: hirify tracker import --data-file rows.json, with {"applications":[{"job_title":"..."}]}.')
+  let payload
+  try { payload = JSON.parse(raw) } catch { die('--data expects JSON.') }
+  const res = await callCapability('applications.import', { payload, allow: [200, 422] })
+  refused(res, '', 'the rows could not be imported. Send {"applications":[...]}, up to 200 rows.')
+  const d = res.body?.data ?? {}
+  out(res.body, () => {
+    console.log(`Created ${d.created ?? 0}, duplicates ${d.duplicates ?? 0}, errors ${d.errors ?? 0}.`)
+    for (const row of d.results ?? []) {
+      if (row.status === 'error') console.log(`  row ${row.index}: ${Object.values(row.errors ?? {}).flat().join(' ')}`)
+    }
+  })
+}
+
+const TRACKER_FIELDS = { title: 'job_title', company: 'company', url: 'job_url', date: 'date_applied', stage: 'stage', comment: 'comment', feedback: 'feedback', source: 'source', contact: 'recruiter_contact', salary: 'expected_salary', 'work-type': 'work_type' }
+
+async function cmdTrackerUpdate(args, words) {
+  const id = trackerId(words[0], 'hirify tracker update <tracker-id> --stage Offer')
+  const payload = {}
+  for (const [name, field] of Object.entries(TRACKER_FIELDS)) {
+    const value = flag(args, `--${name}`)
+    if (value !== null) payload[field] = value
+  }
+  if (!Object.keys(payload).length) die(`name at least one field to change: ${Object.keys(TRACKER_FIELDS).map(x => `--${x}`).join(', ')}.`)
+  if (payload.expected_salary) {
+    if (!Number.isFinite(Number(payload.expected_salary))) die('--salary requires a number.')
+    payload.expected_salary = Number(payload.expected_salary)
+  }
+  const res = await callCapability('tracker.update', { params: { tracker_id: id }, payload, allow: [200, 404, 422] })
+  refused(res, TRACKER_NOT_FOUND, 'the entry could not be changed.')
+  const { status } = res.body?.data ?? {}
+  out(res.body, () => console.log(status === 'unchanged' ? `Nothing to change in tracker entry ${id}.` : `Updated tracker entry ${id}.`))
+}
+
+async function cmdTrackerDelete(_, words) {
+  const id = trackerId(words[0], 'hirify tracker delete <tracker-id>')
+  const res = await callCapability('tracker.delete', { params: { tracker_id: id }, allow: [200, 404] })
+  refused(res, TRACKER_NOT_FOUND, 'the entry could not be deleted.')
+  out(res.body, () => console.log(`Deleted tracker entry ${id}.`))
+}
+
+async function cmdTrackerStages() {
+  const body = await callCapability('tracker.stages')
+  out(body, () => {
+    for (const s of body?.data?.stages ?? []) console.log(`${String(s.name).padEnd(22)} ${s.settable ? '' : '(set by the system)'}`.trimEnd())
+  })
+}
+
+async function cmdTrackerStats(args) {
+  const query = new URLSearchParams()
+  const period = flag(args, '--period')
+  if (period) query.set('period', period)
+  const res = await callCapability('tracker.stats', { query, allow: [200, 422] })
+  refused(res, '', '--period takes now, week, month or all.')
+  const d = res.body?.data ?? {}
+  out(res.body, () => {
+    console.log(`period:        ${d.period ?? '-'}`)
+    console.log(`applications:  ${d.total_applications ?? 0}`)
+    console.log(`interviews:    ${d.interviews ?? 0}`)
+    console.log(`offers:        ${d.offers ?? 0}`)
+    console.log(`response rate: ${d.response_rate ?? 0}%`)
+    if (d.by_stage?.length) {
+      console.log('\nBy stage:')
+      for (const s of d.by_stage) console.log(`  ${String(s.name ?? '-').padEnd(22)} ${s.count}`)
+    }
+    if (d.by_source?.length) {
+      console.log('\nBy source:')
+      for (const s of d.by_source) console.log(`  ${String(s.source ?? '-').padEnd(22)} ${s.count}`)
+    }
+  })
+}
+
+/**
  * Send a real application, on Hirify, to a real person. This is the one command here
  * that cannot be undone, so it never guesses: if the account has several profiles and
  * none was named, the server refuses and we pass that on rather than picking one.
@@ -854,7 +1000,10 @@ return {
   'vacancy search': cmdVacancySearch, 'vacancy read': cmdVacancyRead, 'vacancy reveal': cmdVacancyReveal, 'vacancy apply': cmdVacancyApply,
   'vacancy hide': cmdVacancyHide, 'company hide': cmdCompanyHide, 'hidden list': cmdHiddenList,
   'feed list': cmdFeedList, 'feed show': cmdFeedShow, 'feed create': cmdFeedCreate, 'feed deliver': cmdFeedDeliver,
-  'profile list': cmdProfileList, 'profile duplicate': cmdProfileDuplicate, 'webhook list': cmdWebhookList, 'webhook create': cmdWebhookCreate,
+  'profile list': cmdProfileList, 'profile duplicate': cmdProfileDuplicate,
+  'tracker list': cmdTrackerList, 'tracker show': cmdTrackerShow, 'tracker add': cmdTrackerAdd, 'tracker import': cmdTrackerImport,
+  'tracker update': cmdTrackerUpdate, 'tracker delete': cmdTrackerDelete, 'tracker stages': cmdTrackerStages, 'tracker stats': cmdTrackerStats,
+  'webhook list': cmdWebhookList, 'webhook create': cmdWebhookCreate,
   'feedback send': cmdFeedbackSend, 'filter guide': cmdFilterGuide, 'api call': cmdApiCall,
   'capabilities list': async () => output.json(await api.loadManifest()),
   'capabilities show': async (_, words) => output.json(await api.resolveCapability(words[0])),

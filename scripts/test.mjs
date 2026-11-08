@@ -111,6 +111,14 @@ const CAPS = [
   ['feeds.set_delivery', 'PUT', '/api/agent/feeds/{feed_id}/delivery'],
   ['profiles.list', 'GET', '/api/agent/profiles'],
   ['profiles.duplicate', 'POST', '/api/agent/profiles/{profile_id}/duplicate'],
+  ['applications.list', 'GET', '/api/agent/applications'],
+  ['applications.read', 'GET', '/api/agent/application'],
+  ['applications.track', 'POST', '/api/agent/applications/track'],
+  ['applications.import', 'POST', '/api/agent/applications/import'],
+  ['tracker.update', 'PATCH', '/api/agent/tracker/{tracker_id}'],
+  ['tracker.delete', 'DELETE', '/api/agent/tracker/{tracker_id}'],
+  ['tracker.stages', 'GET', '/api/agent/tracker/stages'],
+  ['tracker.stats', 'GET', '/api/agent/tracker/stats'],
   ['webhooks.list', 'GET', '/api/agent/webhooks'],
   ['webhooks.create', 'POST', '/api/agent/webhooks'],
   ['feedback.send', 'POST', '/api/agent/feedback'],
@@ -320,6 +328,109 @@ test('profile duplicate refuses a non-numeric id before calling the server', asy
   assert.notEqual(code, 0)
   assert.deepEqual(seen, [])
   assert.match(stderr, /profile id is required, a number/)
+})
+
+test('tracker list names which id each row carries', async () => {
+  const data = [
+    { application_id: null, tracker_id: 7, stage: 'Offer', date_applied: '2026-10-01', title: 'Backend', company: 'Acme' },
+    { application_id: 9, tracker_id: null, stage: 'Applied', date_applied: '2026-10-02', title: 'Go', company: 'Beta' },
+  ]
+  const { code, stdout, seen } = await run(['tracker', 'list', '--source', 'tracker', '--limit', '5'], answer(200, { data, meta: {} }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/applications?source=tracker&per_page=5'])
+  assert.match(stdout, /^tracker 7 +Offer +2026-10-01 {2}Backend · Acme$/m)
+  assert.match(stdout, /^application 9 +Applied/m)
+})
+
+test('tracker show reads by tracker id or by application id, not both', async () => {
+  const byTracker = await run(['tracker', 'show', '7'], answer(200, { data: { title: 'Backend', stage: 'Offer', comment: 'note', history: [{ stage: 'Applied', at: '2026-10-01T10:00:00+00:00' }] } }))
+  assert.deepEqual(byTracker.seen, ['/api/agent/application?tracker_id=7'])
+  assert.match(byTracker.stdout, /^note: +note$/m)
+  assert.match(byTracker.stdout, /2026-10-01 {2}Applied/)
+
+  const byApplication = await run(['tracker', 'show', '--application', '9'], answer(200, { data: { title: 'Go' } }))
+  assert.deepEqual(byApplication.seen, ['/api/agent/application?application_id=9'])
+
+  const both = await run(['tracker', 'show', '7', '--application', '9'], answer(200, { data: {} }))
+  assert.notEqual(both.code, 0)
+  assert.deepEqual(both.seen, [])
+})
+
+test('tracker add logs a vacancy and passes the Hirify conflict on', async () => {
+  const data = { status: 'created', application: { tracker_id: 7, stage: 'Applied' } }
+  const added = await run(['tracker', 'add', 'go-1', '--comment', 'via mail'], answer(200, { data }))
+  assert.equal(added.code, 0)
+  assert.match(added.stdout, /^Logged\. Tracker entry 7, stage Applied\.$/m)
+
+  const body = { ok: false, error: { code: 'conflict', message: 'This person applied to this vacancy through Hirify.' } }
+  const conflict = await run(['tracker', 'add', 'go-1'], answer(409, body))
+  assert.notEqual(conflict.code, 0)
+  assert.match(conflict.stderr, /applied to this vacancy through Hirify/)
+})
+
+test('tracker update sends only the named fields and maps them to the API names', async () => {
+  let sent = ''
+  const reply = (req) => { req.on('data', (chunk) => { sent += chunk }); return { status: 200, body: { data: { status: 'updated', application: { tracker_id: 7 } } } } }
+  const { code, stdout, seen } = await run(['tracker', 'update', '7', '--title', 'Staff', '--salary', '300000', '--comment='], reply)
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/tracker/7'])
+  assert.deepEqual(JSON.parse(sent), { job_title: 'Staff', comment: '', expected_salary: 300000 })
+  assert.match(stdout, /^Updated tracker entry 7\.$/m)
+})
+
+test('tracker update refuses no fields, a bad id and a bad salary before calling the server', async () => {
+  for (const argv of [['tracker', 'update', '7'], ['tracker', 'update', 'abc', '--stage', 'Offer'], ['tracker', 'update', '7', '--salary', 'many']]) {
+    const { code, seen } = await run(argv, answer(200, { data: {} }))
+    assert.notEqual(code, 0, argv.join(' '))
+    assert.deepEqual(seen, [], argv.join(' '))
+  }
+})
+
+test('tracker update and delete say when the entry does not exist', async () => {
+  const body = { ok: false, error: { code: 'not_found', message: 'Application not found.' } }
+  for (const argv of [['tracker', 'update', '7', '--stage', 'Offer'], ['tracker', 'delete', '7']]) {
+    const { code, stderr } = await run(argv, answer(404, body))
+    assert.notEqual(code, 0, argv.join(' '))
+    assert.match(stderr, /no tracker entry with that id/)
+  }
+})
+
+test('tracker delete confirms what it removed', async () => {
+  const { code, stdout, seen } = await run(['tracker', 'delete', '7'], answer(200, { data: { tracker_id: 7, deleted: true } }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/tracker/7'])
+  assert.match(stdout, /^Deleted tracker entry 7\.$/m)
+})
+
+test('tracker stages marks the stages only the system sets', async () => {
+  const data = { stages: [{ name: 'Applied', settable: true }, { name: 'Withdrawn', settable: false }] }
+  const { stdout } = await run(['tracker', 'stages'], answer(200, { data }))
+
+  assert.match(stdout, /^Applied$/m)
+  assert.match(stdout, /^Withdrawn +\(set by the system\)$/m)
+})
+
+test('tracker stats passes the period and prints the numbers', async () => {
+  const data = { period: 'month', total_applications: 3, interviews: 1, offers: 1, response_rate: 33.3, by_stage: [{ name: 'Offer', count: 1 }], by_source: [] }
+  const { stdout, seen } = await run(['tracker', 'stats', '--period', 'month'], answer(200, { data }))
+
+  assert.deepEqual(seen, ['/api/agent/tracker/stats?period=month'])
+  assert.match(stdout, /^applications: +3$/m)
+  assert.match(stdout, /^response rate: 33\.3%$/m)
+})
+
+test('tracker import sends the rows and lists the rows that failed', async () => {
+  const data = { created: 1, duplicates: 0, errors: 1, results: [{ index: 0, status: 'created' }, { index: 1, status: 'error', errors: { job_title: ['Title is required.'] } }] }
+  const rows = JSON.stringify({ applications: [{ job_title: 'A' }, {}] })
+  const { code, stdout, seen } = await run(['tracker', 'import', `--data=${rows}`], answer(200, { data }))
+
+  assert.equal(code, 0)
+  assert.deepEqual(seen, ['/api/agent/applications/import'])
+  assert.match(stdout, /^Created 1, duplicates 0, errors 1\.$/m)
+  assert.match(stdout, /row 1: Title is required\./)
 })
 
 test('hidden list shows vacancies and companies and how to unhide', async () => {
