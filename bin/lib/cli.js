@@ -1,5 +1,5 @@
 import { CliError, redact, safeText } from './errors.js'
-const ARGUMENTS = { auth: '[<key>]', update: '[<version>]', 'vacancy search': '[<query>]', 'vacancy read': '<slug>', 'vacancy reveal': '<slug>', 'vacancy apply': '<slug>', 'vacancy hide': '<slug>...', 'company hide': '[<name>...]', 'feed show': '<id>', 'feed create': '<name>', 'feed deliver': '<id>', 'webhook create': '<name> <url>', 'feedback send': '<bug|feature> <title>', 'api call': '<capability>', 'capabilities show': '<capability>' }
+const ARGUMENTS = { auth: '[<key>]', update: '[<version>]', 'vacancy search': '[<query>]', 'vacancy read': '<slug>', 'vacancy reveal': '<slug>', 'vacancy apply': '<slug>', 'vacancy hide': '<slug>...', 'company hide': '[<name>...]', 'feed show': '<id>', 'feed create': '<name>', 'feed deliver': '<id>', 'tracker show': '[<tracker-id>]', 'tracker add': '<slug>', 'tracker update': '<tracker-id>', 'tracker delete': '<tracker-id>', 'webhook create': '<name> <url>', 'feedback send': '<bug|feature> <title>', 'api call': '<capability>', 'capabilities show': '<capability>' }
 const GLOBAL = ['json', 'fields', 'error-format', 'debug', 'timeout', 'help']
 export const BOOLEAN_FLAGS = new Set(['json', 'debug', 'help', 'force', 'no-browser', 'stdin', 'telegram', 'no-telegram', 'no-webhook', 'check', 'rollback', 'undo'])
 export const COMMANDS = {
@@ -27,6 +27,14 @@ export const COMMANDS = {
   'feed deliver': { args: [1, 1], flags: ['telegram', 'no-telegram', 'webhook', 'no-webhook'], description: 'change delivery settings' },
   'profile list': { args: [0, 0], description: 'profiles you can apply with' },
   'profile duplicate': { args: [1, 1], description: 'copy a profile in full, contacts included; counts toward the profile limit' },
+  'tracker list': { args: [0, 0], flags: ['source', 'page', 'limit'], description: 'your applications: sent through Hirify and tracker entries; free' },
+  'tracker show': { args: [0, 1], flags: ['application'], description: 'one application with its stage history: <tracker-id> or --application <id>; free' },
+  'tracker add': { args: [1, 1], flags: ['stage', 'comment'], description: 'log an application to a Hirify vacancy made elsewhere; free' },
+  'tracker import': { args: [0, 0], flags: ['data', 'data-file'], description: 'import a table of applications: JSON {"applications":[...]}, up to 200 rows; free' },
+  'tracker update': { args: [1, 1], flags: ['title', 'company', 'url', 'date', 'stage', 'comment', 'feedback', 'source', 'contact', 'salary', 'work-type'], description: 'change fields of a tracker entry; other fields stay; free' },
+  'tracker delete': { args: [1, 1], description: 'delete a tracker entry; it cannot be restored; ask the person first' },
+  'tracker stages': { args: [0, 0], description: 'tracker stages in board order; free' },
+  'tracker stats': { args: [0, 0], flags: ['period'], description: 'application statistics: --period now|week|month|all; free' },
   'webhook list': { args: [0, 0], description: 'your delivery endpoints' },
   'webhook create': { args: [2, 2], description: 'create an endpoint: <name> <url>' },
   'filter guide': { args: [0, 0], description: 'supported search filters, from the server' },

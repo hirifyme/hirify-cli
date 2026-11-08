@@ -85,6 +85,14 @@ hirify company hide "<name>"
 hirify hidden list
 hirify profile list
 hirify profile duplicate <id>
+hirify tracker list
+hirify tracker show <tracker-id>
+hirify tracker add <slug>
+hirify tracker update <tracker-id> --stage Offer --comment "after HR"
+hirify tracker delete <tracker-id>
+hirify tracker stages
+hirify tracker stats
+hirify tracker import --data-file rows.json
 hirify vacancy apply <slug> --profile <id> --cover-file cover.txt
 ```
 

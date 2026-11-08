@@ -42,6 +42,9 @@ a request becomes a filter; `account show --json` for current allowances and per
 pagination. Check a draft with
 `hirify api call filters.preview --data '{"filters":{...},"mode":"compact","per_page":20}'`.
 
+`hirify tracker list` shows everything your user applied to. `tracker add`, `import`, `update` and
+`delete` keep that list; `delete` cannot be undone, so ask first. `reference.md` has the fields.
+
 Creating a delivery endpoint (`hirify webhook create`) returns a **secret shown once**: give it to
 your user immediately to store, because it signs every delivery and cannot be shown again.
 
